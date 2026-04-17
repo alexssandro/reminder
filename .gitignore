@@ -1,0 +1,41 @@
+# Secrets / environment
+.env
+!.env.example
+*.env.local
+secrets.json
+appsettings.*.Local.json
+appsettings.Local.json
+*.pfx
+*.key
+*.pem
+
+# .NET
+bin/
+obj/
+*.user
+*.suo
+
+# Android
+android/local.properties
+android/.gradle/
+android/build/
+android/app/build/
+android/app/release/
+android/captures/
+android/.idea/
+*.iml
+*.keystore
+*.jks
+google-services.json
+
+# Postgres local data (if ever dumped to repo)
+db/data/
+*.sqlite
+*.db
+
+# IDE / OS
+.vs/
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

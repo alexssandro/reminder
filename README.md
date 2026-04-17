@@ -1,6 +1,6 @@
 # Reminder
 
-Local-first reminder app with cloud sync, structured like QuizMemo.
+Local-first reminder app with cloud sync.
 
 - **android/** — Kotlin / Jetpack Compose client. Room is the source of truth; a `SyncManager` pushes queued changes and pulls the latest state whenever the network is available.
 - **backend/Reminder.Api/** — ASP.NET Core (.NET 10) minimal API. EF Core + PostgreSQL. No auth (single-user app for now).

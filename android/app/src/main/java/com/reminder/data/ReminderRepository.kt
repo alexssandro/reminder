@@ -14,18 +14,26 @@ class ReminderRepository(ctx: Context) {
 
     fun observeReminders(): Flow<List<ReminderRow>> = db.reminders().observeAll()
     fun observePendingOccurrences(): Flow<List<OccurrenceRow>> = db.occurrences().observePending()
+    fun observeCheckedSince(sinceUtc: Long): Flow<List<OccurrenceRow>> =
+        db.occurrences().observeCheckedSince(sinceUtc)
+    fun observeOverrides(reminderLocalId: Long): Flow<List<ReminderOverrideRow>> =
+        db.overrides().observeForReminder(reminderLocalId)
+    fun observeOverridesFrom(localDate: String): Flow<List<ReminderOverrideRow>> =
+        db.overrides().observeFrom(localDate)
 
     suspend fun createReminder(
         description: String,
         kind: ScheduleKind,
         dailyMinuteOfDay: Int?,
         oneTimeDueAtUtc: Long?,
+        weeklyDaysMask: Int?,
     ): Long {
         val id = db.reminders().insert(ReminderRow(
             description = description,
             scheduleKind = kind,
             dailyMinuteOfDay = dailyMinuteOfDay,
             oneTimeDueAtUtc = oneTimeDueAtUtc,
+            weeklyDaysMask = weeklyDaysMask,
             pendingCreate = true,
         ))
         sync.triggerSync()
@@ -70,4 +78,25 @@ class ReminderRepository(ctx: Context) {
     }
 
     suspend fun findReminder(localId: Long): ReminderRow? = db.reminders().findByLocalId(localId)
+
+    suspend fun findOverride(reminderLocalId: Long, localDate: String): ReminderOverrideRow? =
+        db.overrides().findFor(reminderLocalId, localDate)
+
+    suspend fun setOverride(reminderLocalId: Long, localDate: String, minuteOfDay: Int) {
+        db.overrides().upsert(
+            ReminderOverrideRow(
+                reminderLocalId = reminderLocalId,
+                localDate = localDate,
+                minuteOfDay = minuteOfDay,
+            )
+        )
+    }
+
+    suspend fun deleteOverride(overrideId: Long) {
+        db.overrides().deleteById(overrideId)
+    }
+
+    suspend fun deleteOverridesForReminder(reminderLocalId: Long) {
+        db.overrides().deleteByReminder(reminderLocalId)
+    }
 }

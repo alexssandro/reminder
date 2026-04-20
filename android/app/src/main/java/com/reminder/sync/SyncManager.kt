@@ -72,6 +72,7 @@ class SyncManager private constructor(private val appContext: Context) {
                             scheduleKind = r.scheduleKind.api,
                             dailyMinuteOfDay = r.dailyMinuteOfDay,
                             oneTimeDueAtUtc = r.oneTimeDueAtUtc?.let { Instant.ofEpochMilli(it).toString() },
+                            weeklyDaysMask = r.weeklyDaysMask,
                         ))
                         rDao.update(r.copy(
                             serverId = dto.id,
@@ -85,6 +86,7 @@ class SyncManager private constructor(private val appContext: Context) {
                             scheduleKind = r.scheduleKind.api,
                             dailyMinuteOfDay = r.dailyMinuteOfDay,
                             oneTimeDueAtUtc = r.oneTimeDueAtUtc?.let { Instant.ofEpochMilli(it).toString() },
+                            weeklyDaysMask = r.weeklyDaysMask,
                             isActive = r.isActive,
                         ))
                         rDao.update(r.copy(pendingUpdate = false))
@@ -132,6 +134,7 @@ class SyncManager private constructor(private val appContext: Context) {
                     scheduleKind = ScheduleKind.values().first { it.api == dto.scheduleKind },
                     dailyMinuteOfDay = dto.dailyMinuteOfDay,
                     oneTimeDueAtUtc = dto.oneTimeDueAtUtc?.let { Instant.parse(it).toEpochMilli() },
+                    weeklyDaysMask = dto.weeklyDaysMask,
                     isActive = dto.isActive,
                     pendingCreate = false,
                 ))
@@ -141,6 +144,7 @@ class SyncManager private constructor(private val appContext: Context) {
                     scheduleKind = ScheduleKind.values().first { it.api == dto.scheduleKind },
                     dailyMinuteOfDay = dto.dailyMinuteOfDay,
                     oneTimeDueAtUtc = dto.oneTimeDueAtUtc?.let { Instant.parse(it).toEpochMilli() },
+                    weeklyDaysMask = dto.weeklyDaysMask,
                     isActive = dto.isActive,
                 ))
             }

@@ -2,5 +2,11 @@
 <resources>
     <string name="app_name">Reminder</string>
     <string name="channel_reminders">Reminders</string>
+    <string name="channel_daily_preview">Daily preview</string>
     <string name="action_done">Mark done</string>
+    <string name="preview_title">Today\'s reminders</string>
+    <plurals name="preview_items_count">
+        <item quantity="one">%d item on deck today</item>
+        <item quantity="other">%d items on deck today</item>
+    </plurals>
 </resources>

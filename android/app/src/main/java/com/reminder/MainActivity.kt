@@ -10,7 +10,10 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import androidx.compose.material3.darkColorScheme
+import androidx.compose.ui.graphics.Color
 import androidx.core.content.ContextCompat
+import com.reminder.notifications.DailyPreviewScheduler
 import com.reminder.notifications.NotificationHelper
 import com.reminder.notifications.ReminderScheduler
 import com.reminder.sync.SyncManager
@@ -31,6 +34,7 @@ class MainActivity : ComponentActivity() {
 
         NotificationHelper.ensureChannel(this)
         SyncManager.get(this).start()
+        DailyPreviewScheduler.scheduleNext(this)
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             val granted = ContextCompat.checkSelfPermission(
@@ -47,7 +51,15 @@ class MainActivity : ComponentActivity() {
         }
 
         setContent {
-            MaterialTheme {
+            MaterialTheme(
+                colorScheme = darkColorScheme(
+                    background = Color(0xFF0A1628),
+                    surface = Color(0xFF0A1628),
+                    primary = Color(0xFF22D3EE),
+                    onBackground = Color(0xFFE8F0FA),
+                    onSurface = Color(0xFFE8F0FA),
+                ),
+            ) {
                 Surface { ReminderApp(viewModel) }
             }
         }

@@ -7,11 +7,20 @@ Local-first reminder app with cloud sync.
 - **db/** — seed scripts / migrations live here.
 - **docker-compose.yml** — runs Postgres + API.
 
+## Screenshots
+
+| Home | Manage |
+| --- | --- |
+| ![Home](docs/screenshots/home.png) | ![Manage](docs/screenshots/manage.png) |
+
 ## Reminder model
 
 - **Description** — free text.
-- **ScheduleKind** — `Daily` (fire every day at a given local HH:MM) or `OneTime` (fire at a specific UTC moment).
-- **Occurrences** — each time a reminder fires, we record an occurrence. The UI shows unchecked occurrences as a checklist. While an occurrence is unchecked, Android re-rings it every hour.
+- **ScheduleKind**:
+  - `Daily` — fire every day at a given local HH:MM.
+  - `Weekly` — fire at HH:MM on every selected day of the week (e.g. Mon, Wed, Fri).
+  - `OneTime` — fire at a specific UTC moment.
+- **Occurrences** — each time a reminder fires, we record an occurrence. The UI shows unchecked occurrences as a checklist. While an occurrence is unchecked, Android re-rings it every hour. Check-offs play a confetti animation and land in a green "Done today" section.
 
 ## Running the backend
 
@@ -40,4 +49,3 @@ dotnet run     # http://0.0.0.0:5080
 - Creating, editing, deleting reminders and checking off occurrences works fully offline — each write hits Room immediately and flags the row `pendingCreate` / `pendingUpdate` / `pendingDelete` / `pendingCheck`.
 - When connectivity is reported, `SyncManager` pushes each queued change and pulls the server's current state. Conflicts resolve local-wins if the row still has pending flags, server-wins otherwise.
 - Alarms fire via `AlarmManager` regardless of network state. The hourly re-ring is also a local alarm, so un-checked reminders keep nagging you offline.
-# reminder

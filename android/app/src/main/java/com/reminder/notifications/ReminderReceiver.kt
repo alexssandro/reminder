@@ -47,8 +47,11 @@ class ReminderReceiver : BroadcastReceiver() {
                     System.currentTimeMillis() + HOUR_MILLIS,
                 )
 
-                // Primary fire on daily reminders: schedule tomorrow's slot.
-                if (intent.action == ACTION_FIRE && reminder.scheduleKind == ScheduleKind.Daily) {
+                // Primary fire on recurring reminders: chain the next slot.
+                if (intent.action == ACTION_FIRE &&
+                    (reminder.scheduleKind == ScheduleKind.Daily ||
+                        reminder.scheduleKind == ScheduleKind.Weekly)
+                ) {
                     ReminderScheduler.scheduleNext(ctx, reminder)
                 }
             } finally {

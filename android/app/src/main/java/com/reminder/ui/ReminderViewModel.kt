@@ -4,9 +4,11 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.reminder.data.OccurrenceRow
+import com.reminder.data.ReminderOverrideRow
 import com.reminder.data.ReminderRepository
 import com.reminder.data.ReminderRow
 import com.reminder.data.ScheduleKind
+import kotlinx.coroutines.flow.Flow
 import com.reminder.notifications.NotificationHelper
 import com.reminder.notifications.ReminderScheduler
 import kotlinx.coroutines.flow.SharingStarted
@@ -23,13 +25,24 @@ class ReminderViewModel(app: Application) : AndroidViewModel(app) {
     val pendingOccurrences: StateFlow<List<OccurrenceRow>> =
         repo.observePendingOccurrences().stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
+    val checkedToday: StateFlow<List<OccurrenceRow>> =
+        repo.observeCheckedSince(startOfTodayUtcMillis())
+            .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    private fun startOfTodayUtcMillis(): Long =
+        java.time.LocalDate.now()
+            .atStartOfDay(java.time.ZoneId.systemDefault())
+            .toInstant()
+            .toEpochMilli()
+
     fun createReminder(
         description: String,
         kind: ScheduleKind,
         dailyMinuteOfDay: Int?,
         oneTimeDueAtUtc: Long?,
+        weeklyDaysMask: Int?,
     ) = viewModelScope.launch {
-        val localId = repo.createReminder(description, kind, dailyMinuteOfDay, oneTimeDueAtUtc)
+        val localId = repo.createReminder(description, kind, dailyMinuteOfDay, oneTimeDueAtUtc, weeklyDaysMask)
         val r = repo.findReminder(localId) ?: return@launch
         ReminderScheduler.scheduleNext(getApplication(), r)
     }
@@ -43,6 +56,7 @@ class ReminderViewModel(app: Application) : AndroidViewModel(app) {
 
     fun delete(r: ReminderRow) = viewModelScope.launch {
         ReminderScheduler.cancel(getApplication(), r.id)
+        repo.deleteOverridesForReminder(r.id)
         repo.deleteReminder(r.id)
     }
 
@@ -50,5 +64,22 @@ class ReminderViewModel(app: Application) : AndroidViewModel(app) {
         repo.checkOccurrence(occurrence.id)
         ReminderScheduler.cancelRepeat(getApplication(), occurrence.id)
         NotificationHelper.cancel(getApplication(), occurrence.id)
+    }
+
+    fun observeOverrides(reminderLocalId: Long): Flow<List<ReminderOverrideRow>> =
+        repo.observeOverrides(reminderLocalId)
+
+    val overridesToday: StateFlow<List<ReminderOverrideRow>> =
+        repo.observeOverridesFrom(java.time.LocalDate.now().toString())
+            .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    fun setOverride(r: ReminderRow, localDate: String, minuteOfDay: Int) = viewModelScope.launch {
+        repo.setOverride(r.id, localDate, minuteOfDay)
+        if (r.isActive) ReminderScheduler.scheduleNext(getApplication(), r)
+    }
+
+    fun removeOverride(r: ReminderRow, overrideId: Long) = viewModelScope.launch {
+        repo.deleteOverride(overrideId)
+        if (r.isActive) ReminderScheduler.scheduleNext(getApplication(), r)
     }
 }

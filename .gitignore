@@ -39,3 +39,6 @@ db/data/
 .idea/
 .DS_Store
 Thumbs.db
+
+# Claude Code local
+.claude/

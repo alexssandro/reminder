@@ -18,7 +18,7 @@ public static class ReminderEndpoints
                 .ThenBy(x => x.Id)
                 .Select(x => new ReminderDto(
                     x.Id, x.Description, x.ScheduleKind, x.DailyMinuteOfDay,
-                    x.OneTimeDueAtUtc, x.IsActive, x.CreatedAtUtc))
+                    x.OneTimeDueAtUtc, x.WeeklyDaysMask, x.IsActive, x.CreatedAtUtc))
                 .ToListAsync();
             return Results.Ok(items);
         });
@@ -28,19 +28,25 @@ public static class ReminderEndpoints
             if (string.IsNullOrWhiteSpace(req.Description))
                 return Results.BadRequest(new { error = "Description is required" });
 
-            if (req.ScheduleKind == ScheduleKind.Daily &&
+            var minuteRequired = req.ScheduleKind == ScheduleKind.Daily || req.ScheduleKind == ScheduleKind.Weekly;
+            if (minuteRequired &&
                 (req.DailyMinuteOfDay is null || req.DailyMinuteOfDay < 0 || req.DailyMinuteOfDay > 1439))
                 return Results.BadRequest(new { error = "DailyMinuteOfDay required in 0..1439" });
 
             if (req.ScheduleKind == ScheduleKind.OneTime && req.OneTimeDueAtUtc is null)
                 return Results.BadRequest(new { error = "OneTimeDueAtUtc required" });
 
+            if (req.ScheduleKind == ScheduleKind.Weekly &&
+                (req.WeeklyDaysMask is null || (req.WeeklyDaysMask & 0x7F) == 0))
+                return Results.BadRequest(new { error = "WeeklyDaysMask required (bits 0..6, at least one day)" });
+
             var entity = new Entities.Reminder
             {
                 Description = req.Description.Trim(),
                 ScheduleKind = req.ScheduleKind,
-                DailyMinuteOfDay = req.ScheduleKind == ScheduleKind.Daily ? req.DailyMinuteOfDay : null,
+                DailyMinuteOfDay = minuteRequired ? req.DailyMinuteOfDay : null,
                 OneTimeDueAtUtc = req.ScheduleKind == ScheduleKind.OneTime ? req.OneTimeDueAtUtc : null,
+                WeeklyDaysMask = req.ScheduleKind == ScheduleKind.Weekly ? (req.WeeklyDaysMask & 0x7F) : null,
                 IsActive = true,
             };
             db.Reminders.Add(entity);
@@ -52,10 +58,12 @@ public static class ReminderEndpoints
         {
             var e = await db.Reminders.FindAsync(id);
             if (e is null) return Results.NotFound();
+            var minuteRequired = req.ScheduleKind == ScheduleKind.Daily || req.ScheduleKind == ScheduleKind.Weekly;
             e.Description = req.Description.Trim();
             e.ScheduleKind = req.ScheduleKind;
-            e.DailyMinuteOfDay = req.ScheduleKind == ScheduleKind.Daily ? req.DailyMinuteOfDay : null;
+            e.DailyMinuteOfDay = minuteRequired ? req.DailyMinuteOfDay : null;
             e.OneTimeDueAtUtc = req.ScheduleKind == ScheduleKind.OneTime ? req.OneTimeDueAtUtc : null;
+            e.WeeklyDaysMask = req.ScheduleKind == ScheduleKind.Weekly ? (req.WeeklyDaysMask & 0x7F) : null;
             e.IsActive = req.IsActive;
             await db.SaveChangesAsync();
             return Results.Ok(ToDto(e));
@@ -118,5 +126,5 @@ public static class ReminderEndpoints
 
     private static ReminderDto ToDto(Entities.Reminder e) =>
         new(e.Id, e.Description, e.ScheduleKind, e.DailyMinuteOfDay,
-            e.OneTimeDueAtUtc, e.IsActive, e.CreatedAtUtc);
+            e.OneTimeDueAtUtc, e.WeeklyDaysMask, e.IsActive, e.CreatedAtUtc);
 }

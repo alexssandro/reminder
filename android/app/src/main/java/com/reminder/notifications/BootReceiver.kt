@@ -20,6 +20,7 @@ class BootReceiver : BroadcastReceiver() {
                 for (r in repo.activeReminders()) {
                     ReminderScheduler.scheduleNext(ctx, r)
                 }
+                DailyPreviewScheduler.scheduleNext(ctx)
             } finally {
                 pending.finish()
             }

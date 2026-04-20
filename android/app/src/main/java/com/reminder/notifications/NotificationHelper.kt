@@ -12,16 +12,25 @@ import com.reminder.R
 
 object NotificationHelper {
     const val CHANNEL_ID = "reminders"
+    const val CHANNEL_PREVIEW_ID = "daily_preview"
+    private const val PREVIEW_NOTIFICATION_ID = 999_001
 
     fun ensureChannel(ctx: Context) {
         val nm = ctx.getSystemService(NotificationManager::class.java) ?: return
-        if (nm.getNotificationChannel(CHANNEL_ID) != null) return
-        val channel = NotificationChannel(
-            CHANNEL_ID,
-            ctx.getString(R.string.channel_reminders),
-            NotificationManager.IMPORTANCE_HIGH,
-        )
-        nm.createNotificationChannel(channel)
+        if (nm.getNotificationChannel(CHANNEL_ID) == null) {
+            nm.createNotificationChannel(NotificationChannel(
+                CHANNEL_ID,
+                ctx.getString(R.string.channel_reminders),
+                NotificationManager.IMPORTANCE_HIGH,
+            ))
+        }
+        if (nm.getNotificationChannel(CHANNEL_PREVIEW_ID) == null) {
+            nm.createNotificationChannel(NotificationChannel(
+                CHANNEL_PREVIEW_ID,
+                ctx.getString(R.string.channel_daily_preview),
+                NotificationManager.IMPORTANCE_DEFAULT,
+            ))
+        }
     }
 
     fun show(ctx: Context, occurrenceLocalId: Long, title: String, text: String) {
@@ -62,5 +71,35 @@ object NotificationHelper {
     fun cancel(ctx: Context, occurrenceLocalId: Long) {
         val nm = ContextCompat.getSystemService(ctx, NotificationManager::class.java) ?: return
         nm.cancel(occurrenceLocalId.toInt())
+    }
+
+    fun showDailyPreview(ctx: Context, items: List<TodayItem>) {
+        ensureChannel(ctx)
+
+        val contentIntent = PendingIntent.getActivity(
+            ctx, PREVIEW_NOTIFICATION_ID,
+            Intent(ctx, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+            },
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+
+        val body = items.joinToString("\n") { "${it.timeLabel}  ${it.description}" }
+        val summary = ctx.resources.getQuantityString(
+            R.plurals.preview_items_count, items.size, items.size,
+        )
+
+        val n = NotificationCompat.Builder(ctx, CHANNEL_PREVIEW_ID)
+            .setSmallIcon(android.R.drawable.ic_menu_agenda)
+            .setContentTitle(ctx.getString(R.string.preview_title))
+            .setContentText(summary)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(body))
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .setContentIntent(contentIntent)
+            .setAutoCancel(true)
+            .build()
+
+        val nm = ContextCompat.getSystemService(ctx, NotificationManager::class.java) ?: return
+        nm.notify(PREVIEW_NOTIFICATION_ID, n)
     }
 }

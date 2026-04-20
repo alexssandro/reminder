@@ -5,12 +5,15 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.os.Build
+import com.reminder.data.AppDatabase
+import com.reminder.data.ReminderOverrideDao
 import com.reminder.data.ReminderRow
 import com.reminder.data.ScheduleKind
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.LocalTime
 import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 
 /**
  * Schedules the *next* fire via AlarmManager for a given reminder. After it fires, the
@@ -20,8 +23,12 @@ import java.time.ZoneId
  */
 object ReminderScheduler {
 
-    fun scheduleNext(ctx: Context, reminder: ReminderRow) {
-        val triggerAtUtc = nextFireAtUtc(reminder, System.currentTimeMillis()) ?: run {
+    suspend fun scheduleNext(ctx: Context, reminder: ReminderRow) {
+        val triggerAtUtc = nextFireAtUtc(
+            reminder,
+            System.currentTimeMillis(),
+            AppDatabase.get(ctx).overrides(),
+        ) ?: run {
             cancel(ctx, reminder.id)
             return
         }
@@ -95,21 +102,52 @@ object ReminderScheduler {
         }
     }
 
-    /** Computes next fire moment in epoch-millis (UTC), or null if in the past for one-time. */
-    fun nextFireAtUtc(r: ReminderRow, nowMillis: Long): Long? {
+    /**
+     * Next fire moment in epoch-millis, accounting for per-day overrides on Daily reminders.
+     * Scans forward up to 60 days (enough headroom even if all overrides pull days around).
+     */
+    suspend fun nextFireAtUtc(r: ReminderRow, nowMillis: Long, overrides: ReminderOverrideDao): Long? {
         if (!r.isActive) return null
         return when (r.scheduleKind) {
             ScheduleKind.Daily -> {
-                val minute = r.dailyMinuteOfDay ?: return null
+                val base = r.dailyMinuteOfDay ?: return null
                 val zone = ZoneId.systemDefault()
                 val now = LocalDateTime.now(zone)
-                val today = LocalDateTime.of(LocalDate.now(zone), LocalTime.of(minute / 60, minute % 60))
-                val target = if (today.isAfter(now)) today else today.plusDays(1)
-                target.atZone(zone).toInstant().toEpochMilli()
+                var date = LocalDate.now(zone)
+                repeat(60) {
+                    val minute = overrides.findFor(r.id, date.format(ISO_DATE))?.minuteOfDay ?: base
+                    val candidate = LocalDateTime.of(date, LocalTime.of(minute / 60, minute % 60))
+                    if (candidate.isAfter(now)) {
+                        return candidate.atZone(zone).toInstant().toEpochMilli()
+                    }
+                    date = date.plusDays(1)
+                }
+                null
             }
             ScheduleKind.OneTime -> r.oneTimeDueAtUtc?.takeIf { it > nowMillis }
+            ScheduleKind.Weekly -> {
+                val minute = r.dailyMinuteOfDay ?: return null
+                val mask = r.weeklyDaysMask ?: return null
+                if (mask and 0x7F == 0) return null
+                val zone = ZoneId.systemDefault()
+                val now = LocalDateTime.now(zone)
+                var date = LocalDate.now(zone)
+                repeat(14) {
+                    val bit = 1 shl (date.dayOfWeek.value % 7)
+                    if ((mask and bit) != 0) {
+                        val candidate = LocalDateTime.of(date, LocalTime.of(minute / 60, minute % 60))
+                        if (candidate.isAfter(now)) {
+                            return candidate.atZone(zone).toInstant().toEpochMilli()
+                        }
+                    }
+                    date = date.plusDays(1)
+                }
+                null
+            }
         }
     }
+
+    private val ISO_DATE: DateTimeFormatter = DateTimeFormatter.ISO_LOCAL_DATE
 
     private fun requestCodeFor(id: Long, salt: Int): Int = ((id shl 4) or salt.toLong()).toInt()
     private const val REQ_PRIMARY = 1

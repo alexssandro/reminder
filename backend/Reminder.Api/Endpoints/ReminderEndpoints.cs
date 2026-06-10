@@ -122,6 +122,20 @@ public static class ReminderEndpoints
                 e.Id, e.ReminderId, e.Reminder.Description,
                 e.DueAtUtc, e.FiredAtUtc, e.CheckedAtUtc));
         });
+
+        o.MapPost("/{id:int}/uncheck", async (int id, AppDbContext db) =>
+        {
+            var e = await db.Occurrences.Include(x => x.Reminder).FirstOrDefaultAsync(x => x.Id == id);
+            if (e is null) return Results.NotFound();
+            if (e.CheckedAtUtc is not null)
+            {
+                e.CheckedAtUtc = null;
+                await db.SaveChangesAsync();
+            }
+            return Results.Ok(new OccurrenceDto(
+                e.Id, e.ReminderId, e.Reminder.Description,
+                e.DueAtUtc, e.FiredAtUtc, e.CheckedAtUtc));
+        });
     }
 
     private static ReminderDto ToDto(Entities.Reminder e) =>

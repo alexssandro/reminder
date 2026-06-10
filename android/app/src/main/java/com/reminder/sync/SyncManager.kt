@@ -112,8 +112,9 @@ class SyncManager private constructor(private val appContext: Context) {
                     oDao.update(o.copy(serverId = dto.id, pendingCreate = false))
                 }
                 val fresh = oDao.findByLocalId(o.id) ?: continue
-                if (fresh.pendingCheck && fresh.serverId != null && fresh.checkedAtUtc != null) {
-                    api.check(fresh.serverId)
+                if (fresh.pendingCheck && fresh.serverId != null) {
+                    if (fresh.checkedAtUtc != null) api.check(fresh.serverId)
+                    else api.uncheck(fresh.serverId)
                     oDao.update(fresh.copy(pendingCheck = false))
                 }
             } catch (t: Throwable) {

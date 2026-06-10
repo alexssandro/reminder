@@ -56,6 +56,33 @@ interface ReminderOverrideDao {
 }
 
 @Dao
+interface ChecklistDao {
+    @Query("SELECT * FROM checklist_items ORDER BY reminderLocalId ASC, position ASC")
+    fun observeItems(): Flow<List<ChecklistItemRow>>
+
+    @Query("SELECT * FROM checklist_items WHERE reminderLocalId = :reminderLocalId ORDER BY position ASC")
+    suspend fun itemsFor(reminderLocalId: Long): List<ChecklistItemRow>
+
+    @Insert
+    suspend fun insertItem(row: ChecklistItemRow): Long
+
+    @Query("DELETE FROM checklist_items WHERE reminderLocalId = :reminderLocalId")
+    suspend fun deleteItemsForReminder(reminderLocalId: Long)
+
+    @Query("SELECT * FROM checklist_checks WHERE localDate = :localDate")
+    fun observeChecksOn(localDate: String): Flow<List<ChecklistCheckRow>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertCheck(row: ChecklistCheckRow): Long
+
+    @Query("DELETE FROM checklist_checks WHERE checklistItemLocalId = :itemId AND localDate = :localDate")
+    suspend fun deleteCheck(itemId: Long, localDate: String)
+
+    @Query("DELETE FROM checklist_checks WHERE checklistItemLocalId = :itemId")
+    suspend fun deleteChecksForItem(itemId: Long)
+}
+
+@Dao
 interface OccurrenceDao {
     @Query("""SELECT o.* FROM occurrences o
               INNER JOIN reminders r ON r.id = o.reminderLocalId
@@ -72,6 +99,14 @@ interface OccurrenceDao {
     @Query("SELECT * FROM occurrences WHERE id = :id")
     suspend fun findByLocalId(id: Long): OccurrenceRow?
 
+    @Query("SELECT * FROM occurrences WHERE reminderLocalId = :reminderLocalId AND checkedAtUtc IS NULL")
+    suspend fun uncheckedForReminder(reminderLocalId: Long): List<OccurrenceRow>
+
+    @Query("""SELECT o.* FROM occurrences o
+              INNER JOIN reminders r ON r.id = o.reminderLocalId
+              WHERE o.checkedAtUtc IS NOT NULL AND o.checkedAtUtc >= :sinceUtc AND r.pendingDelete = 0""")
+    suspend fun checkedSince(sinceUtc: Long): List<OccurrenceRow>
+
     @Query("SELECT * FROM occurrences WHERE pendingCreate = 1 OR pendingCheck = 1")
     suspend fun pending(): List<OccurrenceRow>
 
@@ -83,4 +118,7 @@ interface OccurrenceDao {
 
     @Query("DELETE FROM occurrences WHERE reminderLocalId = :reminderLocalId")
     suspend fun deleteByReminder(reminderLocalId: Long)
+
+    @Query("DELETE FROM occurrences WHERE id = :id")
+    suspend fun deleteByLocalId(id: Long)
 }

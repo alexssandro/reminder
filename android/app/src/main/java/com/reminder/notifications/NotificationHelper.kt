@@ -54,7 +54,7 @@ object NotificationHelper {
         )
 
         val n = NotificationCompat.Builder(ctx, CHANNEL_ID)
-            .setSmallIcon(android.R.drawable.ic_popup_reminder)
+            .setSmallIcon(R.drawable.ic_stat_calendar)
             .setContentTitle(title)
             .setContentText(text)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
@@ -73,7 +73,47 @@ object NotificationHelper {
         nm.cancel(occurrenceLocalId.toInt())
     }
 
-    fun showDailyPreview(ctx: Context, items: List<TodayItem>) {
+    /**
+     * Pre-fire countdown notification. Reuses one ID per reminder so successive offsets
+     * (1h → 30m → 10m) replace each other instead of stacking.
+     */
+    fun showPre(ctx: Context, reminderLocalId: Long, title: String, text: String) {
+        ensureChannel(ctx)
+
+        val contentIntent = PendingIntent.getActivity(
+            ctx, preNotificationId(reminderLocalId),
+            Intent(ctx, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+            },
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+
+        val n = NotificationCompat.Builder(ctx, CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_stat_calendar)
+            .setContentTitle(title)
+            .setContentText(text)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setContentIntent(contentIntent)
+            .setAutoCancel(true)
+            .build()
+
+        val nm = ContextCompat.getSystemService(ctx, NotificationManager::class.java) ?: return
+        nm.notify(preNotificationId(reminderLocalId), n)
+    }
+
+    fun cancelPre(ctx: Context, reminderLocalId: Long) {
+        val nm = ContextCompat.getSystemService(ctx, NotificationManager::class.java) ?: return
+        nm.cancel(preNotificationId(reminderLocalId))
+    }
+
+    /** Negative-int namespace so it can't collide with positive occurrence-row IDs. */
+    private fun preNotificationId(reminderLocalId: Long): Int = -(reminderLocalId.toInt() + 1)
+
+    fun showDailyPreview(
+        ctx: Context,
+        items: List<TodayItem>,
+        anytimeDescriptions: List<String> = emptyList(),
+    ) {
         ensureChannel(ctx)
 
         val contentIntent = PendingIntent.getActivity(
@@ -84,19 +124,24 @@ object NotificationHelper {
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
 
-        val body = items.joinToString("\n") { "${it.timeLabel}  ${it.description}" }
+        val timedLines = items.map { "${it.timeLabel}  ${it.description}" }
+        val anytimeLines = anytimeDescriptions.map { "Anytime  $it" }
+        val body = (timedLines + anytimeLines).joinToString("\n")
+        val total = items.size + anytimeDescriptions.size
         val summary = ctx.resources.getQuantityString(
-            R.plurals.preview_items_count, items.size, items.size,
+            R.plurals.preview_items_count, total, total,
         )
 
         val n = NotificationCompat.Builder(ctx, CHANNEL_PREVIEW_ID)
-            .setSmallIcon(android.R.drawable.ic_menu_agenda)
+            .setSmallIcon(R.drawable.ic_stat_calendar)
             .setContentTitle(ctx.getString(R.string.preview_title))
             .setContentText(summary)
             .setStyle(NotificationCompat.BigTextStyle().bigText(body))
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
             .setContentIntent(contentIntent)
-            .setAutoCancel(true)
+            // Persistent: stays in the shade until the user dismisses it (tapping won't clear it).
+            .setOngoing(true)
+            .setAutoCancel(false)
             .build()
 
         val nm = ContextCompat.getSystemService(ctx, NotificationManager::class.java) ?: return

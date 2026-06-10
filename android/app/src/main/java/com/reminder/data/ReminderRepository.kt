@@ -77,7 +77,43 @@ class ReminderRepository(ctx: Context) {
         sync.triggerSync()
     }
 
+    /** Reverse a check. If the row has not synced yet, drop it entirely. */
+    suspend fun uncheckOccurrence(localId: Long) {
+        val o = db.occurrences().findByLocalId(localId) ?: return
+        if (o.checkedAtUtc == null) return
+        if (o.serverId == null) {
+            db.occurrences().deleteByLocalId(localId)
+        } else {
+            db.occurrences().update(o.copy(
+                checkedAtUtc = null,
+                pendingCheck = true,
+            ))
+            sync.triggerSync()
+        }
+    }
+
+    /** Insert an occurrence already marked checked, for items the user checks before they fire. */
+    suspend fun checkAhead(reminderLocalId: Long, dueAtUtc: Long): Long {
+        val now = System.currentTimeMillis()
+        val id = db.occurrences().insert(OccurrenceRow(
+            reminderLocalId = reminderLocalId,
+            dueAtUtc = dueAtUtc,
+            checkedAtUtc = now,
+            pendingCreate = true,
+            pendingCheck = true,
+        ))
+        sync.triggerSync()
+        return id
+    }
+
     suspend fun findReminder(localId: Long): ReminderRow? = db.reminders().findByLocalId(localId)
+
+    suspend fun uncheckedOccurrencesFor(reminderLocalId: Long): List<OccurrenceRow> =
+        db.occurrences().uncheckedForReminder(reminderLocalId)
+
+    /** Local ids of reminders checked off at or after [sinceUtc] (e.g. since local midnight). */
+    suspend fun checkedReminderIdsSince(sinceUtc: Long): Set<Long> =
+        db.occurrences().checkedSince(sinceUtc).map { it.reminderLocalId }.toSet()
 
     suspend fun findOverride(reminderLocalId: Long, localDate: String): ReminderOverrideRow? =
         db.overrides().findFor(reminderLocalId, localDate)
@@ -98,5 +134,34 @@ class ReminderRepository(ctx: Context) {
 
     suspend fun deleteOverridesForReminder(reminderLocalId: Long) {
         db.overrides().deleteByReminder(reminderLocalId)
+    }
+
+    // --- Checklist (local-only; no backend sync) ---
+
+    fun observeChecklistItems(): Flow<List<ChecklistItemRow>> = db.checklist().observeItems()
+
+    fun observeChecklistChecksOn(localDate: String): Flow<List<ChecklistCheckRow>> =
+        db.checklist().observeChecksOn(localDate)
+
+    /** Replace a reminder's checklist template with [texts] (blanks dropped), preserving order. */
+    suspend fun setChecklist(reminderLocalId: Long, texts: List<String>) {
+        val dao = db.checklist()
+        for (old in dao.itemsFor(reminderLocalId)) dao.deleteChecksForItem(old.id)
+        dao.deleteItemsForReminder(reminderLocalId)
+        texts.map { it.trim() }.filter { it.isNotEmpty() }.forEachIndexed { i, text ->
+            dao.insertItem(ChecklistItemRow(reminderLocalId = reminderLocalId, text = text, position = i))
+        }
+    }
+
+    suspend fun deleteChecklistForReminder(reminderLocalId: Long) {
+        val dao = db.checklist()
+        for (old in dao.itemsFor(reminderLocalId)) dao.deleteChecksForItem(old.id)
+        dao.deleteItemsForReminder(reminderLocalId)
+    }
+
+    suspend fun setChecklistCheck(itemId: Long, localDate: String, checked: Boolean) {
+        val dao = db.checklist()
+        if (checked) dao.insertCheck(ChecklistCheckRow(checklistItemLocalId = itemId, localDate = localDate))
+        else dao.deleteCheck(itemId, localDate)
     }
 }

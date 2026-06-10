@@ -9,6 +9,7 @@ import com.reminder.data.AppDatabase
 import com.reminder.data.ReminderOverrideDao
 import com.reminder.data.ReminderRow
 import com.reminder.data.ScheduleKind
+import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.LocalTime
@@ -24,9 +25,17 @@ import java.time.format.DateTimeFormatter
 object ReminderScheduler {
 
     suspend fun scheduleNext(ctx: Context, reminder: ReminderRow) {
+        scheduleNextAfter(ctx, reminder, System.currentTimeMillis())
+    }
+
+    /** Like [scheduleNext], but treats [afterMillis] as "now" when picking the next fire. */
+    suspend fun scheduleNextAfter(ctx: Context, reminder: ReminderRow, afterMillis: Long) {
+        // Always wipe stale pre-alarms first; we'll re-schedule whichever offsets are still in the future.
+        cancelPreAlarms(ctx, reminder.id)
+
         val triggerAtUtc = nextFireAtUtc(
             reminder,
-            System.currentTimeMillis(),
+            afterMillis,
             AppDatabase.get(ctx).overrides(),
         ) ?: run {
             cancel(ctx, reminder.id)
@@ -34,6 +43,13 @@ object ReminderScheduler {
         }
         setAlarm(ctx, requestCodeFor(reminder.id, REQ_PRIMARY), triggerAtUtc,
             primaryIntent(ctx, reminder.id, triggerAtUtc))
+
+        for (offsetMinutes in PRE_OFFSETS_MINUTES) {
+            val preAt = triggerAtUtc - offsetMinutes * 60_000L
+            if (preAt <= afterMillis) continue
+            setAlarm(ctx, requestCodeFor(reminder.id, preReqSalt(offsetMinutes)), preAt,
+                preIntent(ctx, reminder.id, triggerAtUtc, offsetMinutes))
+        }
     }
 
     /** After the alarm fires and the occurrence stays un-checked for an hour, re-ring. */
@@ -63,9 +79,27 @@ object ReminderScheduler {
                 action = ReminderReceiver.ACTION_FIRE
             },
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_NO_CREATE,
-        ) ?: return
-        am.cancel(pi)
-        pi.cancel()
+        )
+        if (pi != null) {
+            am.cancel(pi)
+            pi.cancel()
+        }
+        cancelPreAlarms(ctx, reminderLocalId)
+    }
+
+    private fun cancelPreAlarms(ctx: Context, reminderLocalId: Long) {
+        val am = ctx.getSystemService(AlarmManager::class.java) ?: return
+        for (offsetMinutes in PRE_OFFSETS_MINUTES) {
+            val pi = PendingIntent.getBroadcast(
+                ctx, requestCodeFor(reminderLocalId, preReqSalt(offsetMinutes)),
+                Intent(ctx, ReminderReceiver::class.java).apply {
+                    action = ReminderReceiver.ACTION_PRE
+                },
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_NO_CREATE,
+            ) ?: continue
+            am.cancel(pi)
+            pi.cancel()
+        }
     }
 
     private fun primaryIntent(ctx: Context, reminderLocalId: Long, triggerAtUtc: Long): PendingIntent {
@@ -76,6 +110,19 @@ object ReminderScheduler {
         }
         return PendingIntent.getBroadcast(
             ctx, requestCodeFor(reminderLocalId, REQ_PRIMARY), intent,
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+    }
+
+    private fun preIntent(ctx: Context, reminderLocalId: Long, dueAtUtc: Long, offsetMinutes: Int): PendingIntent {
+        val intent = Intent(ctx, ReminderReceiver::class.java).apply {
+            action = ReminderReceiver.ACTION_PRE
+            putExtra(ReminderReceiver.EXTRA_REMINDER_LOCAL_ID, reminderLocalId)
+            putExtra(ReminderReceiver.EXTRA_DUE_AT_UTC, dueAtUtc)
+            putExtra(ReminderReceiver.EXTRA_PRE_OFFSET_MINUTES, offsetMinutes)
+        }
+        return PendingIntent.getBroadcast(
+            ctx, requestCodeFor(reminderLocalId, preReqSalt(offsetMinutes)), intent,
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
     }
@@ -112,8 +159,8 @@ object ReminderScheduler {
             ScheduleKind.Daily -> {
                 val base = r.dailyMinuteOfDay ?: return null
                 val zone = ZoneId.systemDefault()
-                val now = LocalDateTime.now(zone)
-                var date = LocalDate.now(zone)
+                val now = LocalDateTime.ofInstant(Instant.ofEpochMilli(nowMillis), zone)
+                var date = now.toLocalDate()
                 repeat(60) {
                     val minute = overrides.findFor(r.id, date.format(ISO_DATE))?.minuteOfDay ?: base
                     val candidate = LocalDateTime.of(date, LocalTime.of(minute / 60, minute % 60))
@@ -130,8 +177,8 @@ object ReminderScheduler {
                 val mask = r.weeklyDaysMask ?: return null
                 if (mask and 0x7F == 0) return null
                 val zone = ZoneId.systemDefault()
-                val now = LocalDateTime.now(zone)
-                var date = LocalDate.now(zone)
+                val now = LocalDateTime.ofInstant(Instant.ofEpochMilli(nowMillis), zone)
+                var date = now.toLocalDate()
                 repeat(14) {
                     val bit = 1 shl (date.dayOfWeek.value % 7)
                     if ((mask and bit) != 0) {
@@ -144,6 +191,8 @@ object ReminderScheduler {
                 }
                 null
             }
+            // No due date: nothing to schedule.
+            ScheduleKind.Anytime -> null
         }
     }
 
@@ -152,4 +201,15 @@ object ReminderScheduler {
     private fun requestCodeFor(id: Long, salt: Int): Int = ((id shl 4) or salt.toLong()).toInt()
     private const val REQ_PRIMARY = 1
     private const val REQ_REPEAT = 2
+
+    /** Pre-fire countdown notifications. Order does not matter; cancellation iterates the same list. */
+    val PRE_OFFSETS_MINUTES: List<Int> = listOf(60, 30, 10)
+
+    /** Stable per-offset salt so each pre-alarm gets its own PendingIntent slot. */
+    private fun preReqSalt(offsetMinutes: Int): Int = when (offsetMinutes) {
+        60 -> 3
+        30 -> 4
+        10 -> 5
+        else -> error("Unsupported pre-offset $offsetMinutes")
+    }
 }

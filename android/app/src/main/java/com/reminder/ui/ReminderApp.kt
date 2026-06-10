@@ -1,11 +1,13 @@
 package com.reminder.ui
 
+import android.widget.Toast
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -16,14 +18,19 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material.icons.outlined.AllInclusive
 import androidx.compose.material.icons.outlined.Autorenew
 import androidx.compose.material.icons.outlined.CalendarMonth
 import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.material.icons.outlined.EditCalendar
 import androidx.compose.material.icons.outlined.Event
+import androidx.compose.material.icons.outlined.NotificationsActive
 import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material3.*
@@ -33,6 +40,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.rotate
@@ -42,12 +50,18 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlin.math.sin
 import kotlin.random.Random
+import com.reminder.BuildConfig
+import com.reminder.data.ChecklistItemRow
 import com.reminder.data.OccurrenceRow
 import com.reminder.data.ReminderOverrideRow
 import com.reminder.data.ReminderRow
 import com.reminder.data.ScheduleKind
+import com.reminder.notifications.DailyPreviewReceiver
 import com.reminder.notifications.TodayItem
 import com.reminder.notifications.todayItems
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalDateTime
@@ -71,6 +85,7 @@ private val GreenAccent = Color(0xFF34D399)
 private val GreenSurface = Color(0xFF134E4A)
 private val RedAccent = Color(0xFFF472B6)
 private val WarmYellow = Color(0xFFA5B4FC)
+private val VioletAccent = Color(0xFFA78BFA)
 
 private enum class Screen { Home, Manage }
 
@@ -89,8 +104,39 @@ private fun HomeScreen(vm: ReminderViewModel, onOpenManage: () -> Unit) {
     val pending by vm.pendingOccurrences.collectAsState()
     val checkedToday by vm.checkedToday.collectAsState()
     val overridesToday by vm.overridesToday.collectAsState()
+    val checklistItems by vm.checklistItems.collectAsState()
+    val checklistChecksToday by vm.checklistChecksToday.collectAsState()
+
+    val checklistByReminder = checklistItems.groupBy { it.reminderLocalId }
+    val checkedItemIds = checklistChecksToday.map { it.checklistItemLocalId }.toSet()
 
     var confettiTrigger by remember { mutableStateOf(0) }
+
+    // A pending occurrence whose reminder has been edited (time, kind, weekly mask, or
+    // toggled inactive) is stale — hide it so the home screen reflects the edit immediately
+    // instead of being pinned to the old fire row.
+    val livePending = pending.filter { occ ->
+        val r = reminders.firstOrNull { it.id == occ.reminderLocalId } ?: return@filter true
+        val occDate = LocalDate.ofInstant(Instant.ofEpochMilli(occ.dueAtUtc), ZoneId.systemDefault())
+        val override = overridesToday.firstOrNull {
+            it.reminderLocalId == r.id && it.localDate == occDate.toString()
+        }?.minuteOfDay
+        com.reminder.notifications.reminderFiresAt(r, occ.dueAtUtc, override)
+    }
+
+    val nowMs = System.currentTimeMillis()
+    val touched = (livePending.map { it.reminderLocalId } + checkedToday.map { it.reminderLocalId }).toSet()
+
+    val (overdueToday, laterToday) = todayItems(reminders, nowMs, overridesToday)
+        .filter { it.reminderLocalId !in touched }
+        .partition { dueAtUtcForToday(it.minuteOfDay) <= nowMs }
+
+    // No-due-date reminders are always offered until checked off for the day.
+    val anytimeItems = reminders.filter {
+        it.isActive && !it.pendingDelete &&
+            it.scheduleKind == ScheduleKind.Anytime &&
+            it.id !in touched
+    }
 
     Box(
         modifier = Modifier
@@ -129,35 +175,93 @@ private fun HomeScreen(vm: ReminderViewModel, onOpenManage: () -> Unit) {
                 Spacer(Modifier.height(8.dp))
             }
 
-            val today = todayItems(reminders, System.currentTimeMillis(), overridesToday)
-            if (today.isNotEmpty()) {
-                item { SectionHeader("Today") }
-                item { TodayCard(today) }
-                item { Spacer(Modifier.height(4.dp)) }
-            }
-
-            if (pending.isNotEmpty()) {
-                item { SectionHeader("Due \u2014 check them off") }
-                items(pending, key = { "p${it.id}" }) { occ ->
+            val needsAttention = livePending.isNotEmpty() || overdueToday.isNotEmpty()
+            if (needsAttention) {
+                item { SectionHeader("Needs attention") }
+                items(livePending, key = { "p${it.id}" }) { occ ->
                     val reminder = reminders.firstOrNull { it.id == occ.reminderLocalId }
-                    PendingRow(occ, reminder?.description ?: "Reminder") {
+                    PendingRow(
+                        occ,
+                        reminder?.description ?: "Reminder",
+                        checklistByReminder[occ.reminderLocalId].orEmpty(),
+                        checkedItemIds,
+                        vm::toggleChecklistItem,
+                    ) {
                         vm.check(occ)
                         confettiTrigger++
                     }
                 }
-            } else if (today.isEmpty() && checkedToday.isEmpty()) {
-                item { HomeEmptyState(onOpenManage) }
-            } else if (checkedToday.isEmpty()) {
-                item { Spacer(Modifier.height(4.dp)) }
-                item { HomeAllCaughtUp() }
+                items(overdueToday, key = { "o${it.reminderLocalId}" }) { item ->
+                    val reminder = reminders.firstOrNull { it.id == item.reminderLocalId }
+                    OverdueRow(
+                        item,
+                        checklistByReminder[item.reminderLocalId].orEmpty(),
+                        checkedItemIds,
+                        vm::toggleChecklistItem,
+                    ) {
+                        if (reminder != null) {
+                            vm.checkAhead(reminder, dueAtUtcForToday(item.minuteOfDay))
+                            confettiTrigger++
+                        }
+                    }
+                }
+            }
+
+            if (laterToday.isNotEmpty()) {
+                if (needsAttention) item { Spacer(Modifier.height(4.dp)) }
+                item { SectionHeader("Later today") }
+                items(laterToday, key = { "l${it.reminderLocalId}" }) { item ->
+                    val reminder = reminders.firstOrNull { it.id == item.reminderLocalId }
+                    UpcomingRow(
+                        item,
+                        checklistByReminder[item.reminderLocalId].orEmpty(),
+                        checkedItemIds,
+                        vm::toggleChecklistItem,
+                    ) {
+                        if (reminder != null) {
+                            vm.checkAhead(reminder, dueAtUtcForToday(item.minuteOfDay))
+                            confettiTrigger++
+                        }
+                    }
+                }
+            }
+
+            if (anytimeItems.isNotEmpty()) {
+                if (needsAttention || laterToday.isNotEmpty()) item { Spacer(Modifier.height(4.dp)) }
+                item { SectionHeader("Anytime") }
+                items(anytimeItems, key = { "a${it.id}" }) { reminder ->
+                    AnytimeRow(
+                        reminder,
+                        checklistByReminder[reminder.id].orEmpty(),
+                        checkedItemIds,
+                        vm::toggleChecklistItem,
+                    ) {
+                        vm.checkAhead(reminder, nowMs)
+                        confettiTrigger++
+                    }
+                }
+            }
+
+            if (!needsAttention && laterToday.isEmpty() && anytimeItems.isEmpty()) {
+                if (reminders.isEmpty()) {
+                    item { HomeEmptyState(onOpenManage) }
+                } else if (checkedToday.isEmpty()) {
+                    item { HomeAllCaughtUp() }
+                }
             }
 
             if (checkedToday.isNotEmpty()) {
                 item { Spacer(Modifier.height(4.dp)) }
-                item { SectionHeader("Done today") }
+                item { SectionHeader("Checked") }
                 items(checkedToday, key = { "d${it.id}" }) { occ ->
                     val reminder = reminders.firstOrNull { it.id == occ.reminderLocalId }
-                    DoneRow(occ, reminder?.description ?: "Reminder")
+                    DoneRow(
+                        occ,
+                        reminder?.description ?: "Reminder",
+                        checklistByReminder[occ.reminderLocalId].orEmpty(),
+                        checkedItemIds,
+                        vm::toggleChecklistItem,
+                    ) { vm.uncheck(occ) }
                 }
             }
         }
@@ -228,8 +332,10 @@ private fun HomeEmptyState(onOpenManage: () -> Unit) {
 @Composable
 private fun ManageScreen(vm: ReminderViewModel, onBack: () -> Unit) {
     val reminders by vm.reminders.collectAsState()
+    val checklistItems by vm.checklistItems.collectAsState()
     var confirmDelete by remember { mutableStateOf<ReminderRow?>(null) }
     var overrideFor by remember { mutableStateOf<ReminderRow?>(null) }
+    var editFor by remember { mutableStateOf<ReminderRow?>(null) }
     var showCreate by rememberSaveable { mutableStateOf(false) }
 
     Box(
@@ -281,11 +387,42 @@ private fun ManageScreen(vm: ReminderViewModel, onBack: () -> Unit) {
                     ManageRow(
                         r,
                         onToggle = { vm.toggleActive(r) },
+                        onEdit = { editFor = r },
                         onOverride = if (r.scheduleKind == ScheduleKind.Daily) {
                             { overrideFor = r }
                         } else null,
                         onDelete = { confirmDelete = r },
                     )
+                }
+            }
+
+            // Debug-only: fire the daily preview on demand to verify notification behavior
+            // (including the skip-when-everything-is-checked path) without waiting for a slot.
+            if (BuildConfig.DEBUG) {
+                item {
+                    val context = LocalContext.current
+                    val scope = rememberCoroutineScope()
+                    TextButton(onClick = {
+                        scope.launch {
+                            val shown = withContext(Dispatchers.IO) {
+                                DailyPreviewReceiver.buildAndShow(context)
+                            }
+                            Toast.makeText(
+                                context,
+                                if (shown) "Test notification sent"
+                                else "Skipped — everything is already checked off",
+                                Toast.LENGTH_SHORT,
+                            ).show()
+                        }
+                    }) {
+                        Icon(
+                            Icons.Outlined.NotificationsActive,
+                            contentDescription = null,
+                            tint = TextSecondary,
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text("Send test notification", color = TextSecondary)
+                    }
                 }
             }
         }
@@ -307,13 +444,26 @@ private fun ManageScreen(vm: ReminderViewModel, onBack: () -> Unit) {
         }
     }
 
-    if (showCreate) {
-        CreateReminderDialog(
-            onDismiss = { showCreate = false },
-            onCreate = { description, kind, minuteOfDay, oneTimeUtc, weeklyMask ->
-                vm.createReminder(description, kind, minuteOfDay, oneTimeUtc, weeklyMask)
+    if (showCreate || editFor != null) {
+        val target = editFor
+        val initialChecklist = target?.let { t ->
+            checklistItems.filter { it.reminderLocalId == t.id }
+                .sortedBy { it.position }
+                .map { it.text }
+        } ?: emptyList()
+        ReminderEditorDialog(
+            initial = target,
+            initialChecklist = initialChecklist,
+            onDismiss = { showCreate = false; editFor = null },
+            onSave = { description, kind, minuteOfDay, oneTimeUtc, weeklyMask, checklist ->
+                if (target != null) {
+                    vm.updateSchedule(target, description, kind, minuteOfDay, oneTimeUtc, weeklyMask, checklist)
+                } else {
+                    vm.createReminder(description, kind, minuteOfDay, oneTimeUtc, weeklyMask, checklist)
+                }
                 showCreate = false
-            }
+                editFor = null
+            },
         )
     }
 
@@ -358,6 +508,7 @@ private fun ManageScreen(vm: ReminderViewModel, onBack: () -> Unit) {
 private fun ManageRow(
     r: ReminderRow,
     onToggle: () -> Unit,
+    onEdit: () -> Unit,
     onOverride: (() -> Unit)?,
     onDelete: () -> Unit,
 ) {
@@ -404,10 +555,24 @@ private fun ManageRow(
                 horizontalArrangement = Arrangement.End,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
+                TextButton(onClick = onEdit) {
+                    Icon(
+                        Icons.Outlined.Edit,
+                        contentDescription = null,
+                        tint = AccentBlueBright,
+                        modifier = Modifier.size(18.dp),
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        "Edit",
+                        color = AccentBlueBright,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
                 if (onOverride != null) {
                     TextButton(onClick = onOverride) {
                         Icon(
-                            Icons.Outlined.Edit,
+                            Icons.Outlined.EditCalendar,
                             contentDescription = null,
                             tint = AccentBlueBright,
                             modifier = Modifier.size(18.dp),
@@ -451,80 +616,160 @@ private fun SectionHeader(text: String) {
 }
 
 @Composable
-private fun PendingRow(occ: OccurrenceRow, description: String, onCheck: () -> Unit) {
+private fun PendingRow(
+    occ: OccurrenceRow,
+    description: String,
+    checklist: List<ChecklistItemRow>,
+    checkedItemIds: Set<Long>,
+    onToggleChecklistItem: (itemId: Long, checked: Boolean) -> Unit,
+    onCheck: () -> Unit,
+) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(18.dp),
         color = DarkCard,
         border = BorderStroke(1.dp, WarmYellow.copy(alpha = 0.35f)),
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 14.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text("\uD83D\uDD14", fontSize = 22.sp)
-            Spacer(Modifier.width(14.dp))
-            Column(Modifier.weight(1f)) {
-                Text(
-                    description,
-                    style = MaterialTheme.typography.bodyLarge,
-                    fontWeight = FontWeight.SemiBold,
-                    color = TextPrimary,
-                )
-                Spacer(Modifier.height(2.dp))
-                Text(
-                    "Due " + formatInstant(occ.dueAtUtc),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = WarmYellow,
-                )
+        Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text("\uD83D\uDD14", fontSize = 22.sp)
+                Spacer(Modifier.width(14.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        description,
+                        style = MaterialTheme.typography.bodyLarge,
+                        fontWeight = FontWeight.SemiBold,
+                        color = TextPrimary,
+                    )
+                    Spacer(Modifier.height(2.dp))
+                    Text(
+                        "Due " + formatInstant(occ.dueAtUtc),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = WarmYellow,
+                    )
+                }
+                Spacer(Modifier.width(10.dp))
+                CheckCircle(onClick = onCheck)
             }
-            Spacer(Modifier.width(10.dp))
-            CheckCircle(onClick = onCheck)
+            ChecklistBlock(checklist, checkedItemIds, onToggleChecklistItem)
         }
     }
 }
 
 @Composable
-private fun DoneRow(occ: OccurrenceRow, description: String) {
+private fun DoneRow(
+    occ: OccurrenceRow,
+    description: String,
+    checklist: List<ChecklistItemRow>,
+    checkedItemIds: Set<Long>,
+    onToggleChecklistItem: (itemId: Long, checked: Boolean) -> Unit,
+    onUncheck: () -> Unit,
+) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(18.dp),
         color = GreenSurface.copy(alpha = 0.55f),
         border = BorderStroke(1.dp, GreenAccent.copy(alpha = 0.45f)),
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 14.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(40.dp)
-                    .clip(CircleShape)
-                    .background(GreenAccent),
-                contentAlignment = Alignment.Center,
+        Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text("\u2713", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                Box(
+                    modifier = Modifier
+                        .size(28.dp)
+                        .clip(CircleShape)
+                        .background(GreenAccent),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        Icons.Default.Check,
+                        contentDescription = null,
+                        tint = Color.White,
+                        modifier = Modifier.size(16.dp),
+                    )
+                }
+                Spacer(Modifier.width(14.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        description,
+                        style = MaterialTheme.typography.bodyLarge,
+                        fontWeight = FontWeight.SemiBold,
+                        color = GreenAccent,
+                        textDecoration = TextDecoration.LineThrough,
+                    )
+                    Spacer(Modifier.height(2.dp))
+                    Text(
+                        "Checked " + formatInstant(occ.checkedAtUtc ?: occ.dueAtUtc),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = TextSecondary,
+                    )
+                }
+                Spacer(Modifier.width(8.dp))
+                TextButton(onClick = onUncheck) {
+                    Icon(
+                        Icons.AutoMirrored.Filled.Undo,
+                        contentDescription = null,
+                        tint = AccentBlueBright,
+                        modifier = Modifier.size(16.dp),
+                    )
+                    Spacer(Modifier.width(4.dp))
+                    Text(
+                        "Undo",
+                        color = AccentBlueBright,
+                        fontWeight = FontWeight.SemiBold,
+                        style = MaterialTheme.typography.labelMedium,
+                    )
+                }
             }
-            Spacer(Modifier.width(14.dp))
-            Column(Modifier.weight(1f)) {
-                Text(
-                    description,
-                    style = MaterialTheme.typography.bodyLarge,
-                    fontWeight = FontWeight.SemiBold,
-                    color = GreenAccent,
-                    textDecoration = TextDecoration.LineThrough,
-                )
-                Spacer(Modifier.height(2.dp))
-                Text(
-                    "Checked " + formatInstant(occ.checkedAtUtc ?: occ.dueAtUtc),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = TextSecondary,
-                )
+            ChecklistBlock(checklist, checkedItemIds, onToggleChecklistItem)
+        }
+    }
+}
+
+@Composable
+private fun OverdueRow(
+    item: TodayItem,
+    checklist: List<ChecklistItemRow>,
+    checkedItemIds: Set<Long>,
+    onToggleChecklistItem: (itemId: Long, checked: Boolean) -> Unit,
+    onCheck: () -> Unit,
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(18.dp),
+        color = DarkCard,
+        border = BorderStroke(1.dp, WarmYellow.copy(alpha = 0.35f)),
+    ) {
+        Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text("\ud83d\udd14", fontSize = 22.sp)
+                Spacer(Modifier.width(14.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        item.description,
+                        style = MaterialTheme.typography.bodyLarge,
+                        fontWeight = FontWeight.SemiBold,
+                        color = TextPrimary,
+                    )
+                    Spacer(Modifier.height(2.dp))
+                    Text(
+                        "Was due " + item.timeLabel + " today",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = WarmYellow,
+                    )
+                }
+                Spacer(Modifier.width(10.dp))
+                CheckCircle(onClick = onCheck)
             }
+            ChecklistBlock(checklist, checkedItemIds, onToggleChecklistItem)
         }
     }
 }
@@ -533,13 +778,22 @@ private fun DoneRow(occ: OccurrenceRow, description: String) {
 private fun CheckCircle(onClick: () -> Unit) {
     Surface(
         modifier = Modifier
-            .size(40.dp)
+            .size(28.dp)
             .clip(CircleShape)
             .clickable(onClick = onClick),
         shape = CircleShape,
         color = Color.Transparent,
-        border = BorderStroke(2.dp, AccentBlueBright),
-    ) {}
+        border = BorderStroke(1.5.dp, AccentBlueBright),
+    ) {
+        Box(contentAlignment = Alignment.Center) {
+            Icon(
+                Icons.Default.Check,
+                contentDescription = "Mark done",
+                tint = AccentBlueBright,
+                modifier = Modifier.size(16.dp),
+            )
+        }
+    }
 }
 
 @Composable
@@ -548,6 +802,7 @@ private fun ScheduleIcon(kind: ScheduleKind, unsynced: Boolean = false) {
         ScheduleKind.Daily -> Triple(Icons.Outlined.Autorenew, AccentBlueBright, "Daily")
         ScheduleKind.OneTime -> Triple(Icons.Outlined.Event, GreenAccent, "One-time")
         ScheduleKind.Weekly -> Triple(Icons.Outlined.CalendarMonth, WarmYellow, "Weekly")
+        ScheduleKind.Anytime -> Triple(Icons.Outlined.AllInclusive, VioletAccent, "Anytime")
     }
     Box(modifier = Modifier.size(44.dp)) {
         Box(
@@ -589,41 +844,164 @@ private fun ScheduleIcon(kind: ScheduleKind, unsynced: Boolean = false) {
 }
 
 @Composable
-private fun TodayCard(items: List<TodayItem>) {
-    Column(
-        modifier = Modifier.padding(horizontal = 2.dp, vertical = 4.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
+private fun UpcomingRow(
+    item: TodayItem,
+    checklist: List<ChecklistItemRow>,
+    checkedItemIds: Set<Long>,
+    onToggleChecklistItem: (itemId: Long, checked: Boolean) -> Unit,
+    onCheck: () -> Unit,
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(18.dp),
+        color = DarkCard,
+        border = BorderStroke(1.dp, DarkCardLight),
     ) {
-        items.forEach { item ->
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    item.timeLabel,
-                    style = MaterialTheme.typography.labelMedium,
-                    fontWeight = FontWeight.SemiBold,
-                    color = TextSecondary,
-                    modifier = Modifier.width(54.dp),
-                )
+        Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
                 Icon(
                     when (item.kind) {
                         ScheduleKind.Daily -> Icons.Outlined.Autorenew
                         ScheduleKind.OneTime -> Icons.Outlined.Event
                         ScheduleKind.Weekly -> Icons.Outlined.CalendarMonth
+                        ScheduleKind.Anytime -> Icons.Outlined.AllInclusive
                     },
                     contentDescription = null,
-                    tint = TextMuted,
-                    modifier = Modifier.size(14.dp),
+                    tint = AccentBlueBright,
+                    modifier = Modifier.size(22.dp),
                 )
-                Spacer(Modifier.width(12.dp))
+                Spacer(Modifier.width(14.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        item.description,
+                        style = MaterialTheme.typography.bodyLarge,
+                        fontWeight = FontWeight.SemiBold,
+                        color = TextPrimary,
+                    )
+                    Spacer(Modifier.height(2.dp))
+                    Text(
+                        "Scheduled " + item.timeLabel,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = TextSecondary,
+                    )
+                }
+                Spacer(Modifier.width(10.dp))
+                CheckCircle(onClick = onCheck)
+            }
+            ChecklistBlock(checklist, checkedItemIds, onToggleChecklistItem)
+        }
+    }
+}
+
+@Composable
+private fun AnytimeRow(
+    reminder: ReminderRow,
+    checklist: List<ChecklistItemRow>,
+    checkedItemIds: Set<Long>,
+    onToggleChecklistItem: (itemId: Long, checked: Boolean) -> Unit,
+    onCheck: () -> Unit,
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(18.dp),
+        color = DarkCard,
+        border = BorderStroke(1.dp, VioletAccent.copy(alpha = 0.35f)),
+    ) {
+        Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(
+                    Icons.Outlined.AllInclusive,
+                    contentDescription = null,
+                    tint = VioletAccent,
+                    modifier = Modifier.size(22.dp),
+                )
+                Spacer(Modifier.width(14.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        reminder.description,
+                        style = MaterialTheme.typography.bodyLarge,
+                        fontWeight = FontWeight.SemiBold,
+                        color = TextPrimary,
+                    )
+                    Spacer(Modifier.height(2.dp))
+                    Text(
+                        "Anytime",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = VioletAccent,
+                    )
+                }
+                Spacer(Modifier.width(10.dp))
+                CheckCircle(onClick = onCheck)
+            }
+            ChecklistBlock(checklist, checkedItemIds, onToggleChecklistItem)
+        }
+    }
+}
+
+/** Inline, per-day checkable sub-items shown under a reminder on Home. Independent of the parent check. */
+@Composable
+private fun ChecklistBlock(
+    items: List<ChecklistItemRow>,
+    checkedItemIds: Set<Long>,
+    onToggle: (itemId: Long, checked: Boolean) -> Unit,
+) {
+    if (items.isEmpty()) return
+    Column(
+        modifier = Modifier.padding(start = 36.dp, top = 10.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        items.forEach { item ->
+            val checked = item.id in checkedItemIds
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable { onToggle(item.id, !checked) },
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(20.dp)
+                        .clip(RoundedCornerShape(6.dp))
+                        .then(
+                            if (checked) Modifier.background(GreenAccent)
+                            else Modifier.border(1.5.dp, TextMuted, RoundedCornerShape(6.dp))
+                        ),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    if (checked) {
+                        Icon(
+                            Icons.Default.Check,
+                            contentDescription = null,
+                            tint = Color.White,
+                            modifier = Modifier.size(13.dp),
+                        )
+                    }
+                }
+                Spacer(Modifier.width(10.dp))
                 Text(
-                    item.description,
+                    item.text,
                     style = MaterialTheme.typography.bodyMedium,
-                    color = TextPrimary,
-                    modifier = Modifier.weight(1f),
+                    color = if (checked) TextMuted else TextSecondary,
+                    textDecoration = if (checked) TextDecoration.LineThrough else null,
                 )
             }
         }
     }
 }
+
+private fun dueAtUtcForToday(minuteOfDay: Int): Long =
+    LocalDate.now()
+        .atTime(LocalTime.of(minuteOfDay / 60, minuteOfDay % 60))
+        .atZone(ZoneId.systemDefault())
+        .toInstant()
+        .toEpochMilli()
 
 @Composable
 private fun EmptyState() {
@@ -702,6 +1080,7 @@ private fun scheduleSummary(r: ReminderRow): String = when (r.scheduleKind) {
         if (days.isEmpty()) "Weekly"
         else "Weekly on %s at %02d:%02d".format(days.joinToString(", "), m / 60, m % 60)
     }
+    ScheduleKind.Anytime -> "Anytime · no due date"
 }
 
 private val WeekdayShort = listOf("Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat")
@@ -716,18 +1095,38 @@ private fun formatInstant(epochMillis: Long): String {
 }
 
 @Composable
-private fun CreateReminderDialog(
+private fun ReminderEditorDialog(
+    initial: ReminderRow?,
+    initialChecklist: List<String>,
     onDismiss: () -> Unit,
-    onCreate: (description: String, kind: ScheduleKind, dailyMinuteOfDay: Int?, oneTimeUtc: Long?, weeklyDaysMask: Int?) -> Unit,
+    onSave: (description: String, kind: ScheduleKind, dailyMinuteOfDay: Int?, oneTimeUtc: Long?, weeklyDaysMask: Int?, checklist: List<String>) -> Unit,
 ) {
-    var description by rememberSaveable { mutableStateOf("") }
-    var kind by rememberSaveable { mutableStateOf(ScheduleKind.Daily) }
-    var hour by rememberSaveable { mutableStateOf(9) }
-    var minute by rememberSaveable { mutableStateOf(0) }
-    var year by rememberSaveable { mutableStateOf(LocalDate.now().year) }
-    var month by rememberSaveable { mutableStateOf(LocalDate.now().monthValue) }
-    var day by rememberSaveable { mutableStateOf(LocalDate.now().dayOfMonth) }
-    var weeklyMask by rememberSaveable { mutableStateOf(0) }
+    val zone = remember { ZoneId.systemDefault() }
+    val initialOneTimeLdt = remember(initial?.id) {
+        initial?.oneTimeDueAtUtc?.let { LocalDateTime.ofInstant(Instant.ofEpochMilli(it), zone) }
+    }
+    val initialMinuteOfDay = remember(initial?.id) {
+        initial?.dailyMinuteOfDay
+            ?: initialOneTimeLdt?.let { it.hour * 60 + it.minute }
+            ?: (9 * 60)
+    }
+    val today = remember { LocalDate.now() }
+
+    var description by rememberSaveable(initial?.id) { mutableStateOf(initial?.description ?: "") }
+    var kind by rememberSaveable(initial?.id) { mutableStateOf(initial?.scheduleKind ?: ScheduleKind.Daily) }
+    var hour by rememberSaveable(initial?.id) { mutableStateOf(initialMinuteOfDay / 60) }
+    var minute by rememberSaveable(initial?.id) { mutableStateOf(initialMinuteOfDay % 60) }
+    var year by rememberSaveable(initial?.id) { mutableStateOf(initialOneTimeLdt?.year ?: today.year) }
+    var month by rememberSaveable(initial?.id) { mutableStateOf(initialOneTimeLdt?.monthValue ?: today.monthValue) }
+    var day by rememberSaveable(initial?.id) { mutableStateOf(initialOneTimeLdt?.dayOfMonth ?: today.dayOfMonth) }
+    var weeklyMask by rememberSaveable(initial?.id) { mutableStateOf(initial?.weeklyDaysMask ?: 0) }
+    val checklistDraft = remember(initial?.id) {
+        mutableStateListOf<String>().apply { addAll(initialChecklist) }
+    }
+
+    val isEdit = initial != null
+    val title = if (isEdit) "Edit reminder" else "New reminder"
+    val actionLabel = if (isEdit) "Save changes" else "Create reminder"
 
     Dialog(onDismiss = onDismiss) {
         Column(
@@ -739,7 +1138,7 @@ private fun CreateReminderDialog(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
-                    "New reminder",
+                    title,
                     style = MaterialTheme.typography.headlineSmall,
                     fontWeight = FontWeight.Bold,
                     color = TextPrimary,
@@ -766,32 +1165,46 @@ private fun CreateReminderDialog(
                 fontWeight = FontWeight.SemiBold,
                 color = TextMuted,
             )
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                KindChip(
-                    label = "Daily",
-                    icon = Icons.Outlined.Autorenew,
-                    selected = kind == ScheduleKind.Daily,
-                    onClick = { kind = ScheduleKind.Daily },
-                    modifier = Modifier.weight(1f),
-                )
-                KindChip(
-                    label = "Weekly",
-                    icon = Icons.Outlined.CalendarMonth,
-                    selected = kind == ScheduleKind.Weekly,
-                    onClick = { kind = ScheduleKind.Weekly },
-                    modifier = Modifier.weight(1f),
-                )
-                KindChip(
-                    label = "Once",
-                    icon = Icons.Outlined.Event,
-                    selected = kind == ScheduleKind.OneTime,
-                    onClick = { kind = ScheduleKind.OneTime },
-                    modifier = Modifier.weight(1f),
-                )
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    KindChip(
+                        label = "Daily",
+                        icon = Icons.Outlined.Autorenew,
+                        selected = kind == ScheduleKind.Daily,
+                        onClick = { kind = ScheduleKind.Daily },
+                        modifier = Modifier.weight(1f),
+                    )
+                    KindChip(
+                        label = "Weekly",
+                        icon = Icons.Outlined.CalendarMonth,
+                        selected = kind == ScheduleKind.Weekly,
+                        onClick = { kind = ScheduleKind.Weekly },
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    KindChip(
+                        label = "Once",
+                        icon = Icons.Outlined.Event,
+                        selected = kind == ScheduleKind.OneTime,
+                        onClick = { kind = ScheduleKind.OneTime },
+                        modifier = Modifier.weight(1f),
+                    )
+                    KindChip(
+                        label = "Anytime",
+                        icon = Icons.Outlined.AllInclusive,
+                        selected = kind == ScheduleKind.Anytime,
+                        onClick = { kind = ScheduleKind.Anytime },
+                        modifier = Modifier.weight(1f),
+                    )
+                }
             }
 
-            FieldLabel("Time")
-            TimeFieldButton(hour = hour, minute = minute) { h, m -> hour = h; minute = m }
+            // Anytime reminders have no due date, so they need no time/date inputs.
+            if (kind != ScheduleKind.Anytime) {
+                FieldLabel("Time")
+                TimeFieldButton(hour = hour, minute = minute) { h, m -> hour = h; minute = m }
+            }
 
             if (kind == ScheduleKind.OneTime) {
                 FieldLabel("Date")
@@ -805,26 +1218,39 @@ private fun CreateReminderDialog(
                 WeekdaySelector(mask = weeklyMask, onChange = { weeklyMask = it })
             }
 
+            if (kind == ScheduleKind.Anytime) {
+                Text(
+                    "Always available to check off. No alarm or due time.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = TextSecondary,
+                )
+            }
+
+            ChecklistEditor(items = checklistDraft)
+
             Spacer(Modifier.height(4.dp))
-            val canCreate = description.isNotBlank() &&
+            val canSave = description.isNotBlank() &&
                 (kind != ScheduleKind.Weekly || (weeklyMask and 0x7F) != 0)
             GradientButton(
-                label = "Create reminder",
-                enabled = canCreate,
+                label = actionLabel,
+                enabled = canSave,
                 onClick = {
+                    val checklist = checklistDraft.toList()
                     when (kind) {
-                        ScheduleKind.Daily -> onCreate(description.trim(), kind, hour * 60 + minute, null, null)
+                        ScheduleKind.Daily -> onSave(description.trim(), kind, hour * 60 + minute, null, null, checklist)
                         ScheduleKind.OneTime -> {
                             val ldt = LocalDateTime.of(
                                 LocalDate.of(year, month, day),
                                 LocalTime.of(hour, minute),
                             )
                             val millis = ldt.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
-                            onCreate(description.trim(), kind, null, millis, null)
+                            onSave(description.trim(), kind, null, millis, null, checklist)
                         }
-                        ScheduleKind.Weekly -> onCreate(
-                            description.trim(), kind, hour * 60 + minute, null, weeklyMask and 0x7F,
+                        ScheduleKind.Weekly -> onSave(
+                            description.trim(), kind, hour * 60 + minute, null, weeklyMask and 0x7F, checklist,
                         )
+                        // No schedule fields — always available to check off.
+                        ScheduleKind.Anytime -> onSave(description.trim(), kind, null, null, null, checklist)
                     }
                 },
             )
@@ -1024,6 +1450,52 @@ private fun DarkField(value: String, onChange: (String) -> Unit, label: String) 
             unfocusedContainerColor = DarkCard,
         ),
     )
+}
+
+@Composable
+private fun ChecklistEditor(items: MutableList<String>) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        FieldLabel("Checklist (optional)")
+        items.forEachIndexed { index, text ->
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                OutlinedTextField(
+                    value = text,
+                    onValueChange = { items[index] = it },
+                    placeholder = { Text("Sub-item", color = TextMuted) },
+                    modifier = Modifier.weight(1f),
+                    singleLine = true,
+                    shape = RoundedCornerShape(12.dp),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = TextPrimary,
+                        unfocusedTextColor = TextPrimary,
+                        cursorColor = AccentBlueBright,
+                        focusedBorderColor = AccentBlueBright,
+                        unfocusedBorderColor = DarkCardLight,
+                        focusedContainerColor = DarkCard,
+                        unfocusedContainerColor = DarkCard,
+                    ),
+                )
+                IconButton(onClick = { items.removeAt(index) }) {
+                    Icon(
+                        Icons.Default.Close,
+                        contentDescription = "Remove sub-item",
+                        tint = TextMuted,
+                        modifier = Modifier.size(18.dp),
+                    )
+                }
+            }
+        }
+        TextButton(onClick = { items.add("") }) {
+            Icon(
+                Icons.Default.Add,
+                contentDescription = null,
+                tint = AccentBlueBright,
+                modifier = Modifier.size(18.dp),
+            )
+            Spacer(Modifier.width(6.dp))
+            Text("Add sub-item", color = AccentBlueBright, fontWeight = FontWeight.SemiBold)
+        }
+    }
 }
 
 @Composable

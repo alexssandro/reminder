@@ -5,10 +5,12 @@ import android.content.Context
 import android.content.Intent
 import com.reminder.data.AppDatabase
 import com.reminder.data.ReminderRepository
+import com.reminder.data.ScheduleKind
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import java.time.LocalDate
+import java.time.ZoneId
 
 class DailyPreviewReceiver : BroadcastReceiver() {
     override fun onReceive(ctx: Context, intent: Intent) {
@@ -16,16 +18,9 @@ class DailyPreviewReceiver : BroadcastReceiver() {
         val pending = goAsync()
         CoroutineScope(Dispatchers.IO).launch {
             try {
-                val today = LocalDate.now().toString()
-                val db = AppDatabase.get(ctx)
-                val reminders = ReminderRepository(ctx).activeReminders()
-                val overrides = reminders.mapNotNull { r -> db.overrides().findFor(r.id, today) }
-                val items = todayItems(reminders, System.currentTimeMillis(), overrides)
-                if (items.isNotEmpty()) {
-                    NotificationHelper.showDailyPreview(ctx, items)
-                }
+                buildAndShow(ctx)
             } finally {
-                // Chain tomorrow's preview regardless of whether we showed one today.
+                // Chain the next slot regardless of whether we showed one this time.
                 DailyPreviewScheduler.scheduleNext(ctx)
                 pending.finish()
             }
@@ -34,5 +29,34 @@ class DailyPreviewReceiver : BroadcastReceiver() {
 
     companion object {
         const val ACTION_PREVIEW = "com.reminder.DAILY_PREVIEW"
+
+        /**
+         * Gather today's reminders (timed + Anytime) and post the preview notification.
+         * Shared by the scheduled fire and the debug test hooks. Returns true if a
+         * notification was shown, false if everything was already checked off.
+         */
+        suspend fun buildAndShow(ctx: Context): Boolean {
+            val today = LocalDate.now().toString()
+            val db = AppDatabase.get(ctx)
+            val repo = ReminderRepository(ctx)
+            val reminders = repo.activeReminders()
+            val overrides = reminders.mapNotNull { r -> db.overrides().findFor(r.id, today) }
+
+            // Ignore anything already checked off today — the preview only nudges about what's
+            // still outstanding. If that leaves nothing, we don't fire a notification at all.
+            val startOfToday = LocalDate.now().atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
+            val checkedToday = repo.checkedReminderIdsSince(startOfToday)
+
+            val items = todayItems(reminders, System.currentTimeMillis(), overrides)
+                .filter { it.reminderLocalId !in checkedToday }
+            // Anytime reminders have no time-of-day, so they aren't in todayItems; list them
+            // separately so the daily preview still surfaces them to check off.
+            val anytime = reminders
+                .filter { it.scheduleKind == ScheduleKind.Anytime && it.id !in checkedToday }
+                .map { it.description }
+            if (items.isEmpty() && anytime.isEmpty()) return false
+            NotificationHelper.showDailyPreview(ctx, items, anytime)
+            return true
+        }
     }
 }

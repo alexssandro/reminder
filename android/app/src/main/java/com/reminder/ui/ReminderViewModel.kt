@@ -3,6 +3,8 @@ package com.reminder.ui
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.reminder.data.ChecklistCheckRow
+import com.reminder.data.ChecklistItemRow
 import com.reminder.data.OccurrenceRow
 import com.reminder.data.ReminderOverrideRow
 import com.reminder.data.ReminderRepository
@@ -11,6 +13,7 @@ import com.reminder.data.ScheduleKind
 import kotlinx.coroutines.flow.Flow
 import com.reminder.notifications.NotificationHelper
 import com.reminder.notifications.ReminderScheduler
+import com.reminder.notifications.reminderFiresAt
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.stateIn
@@ -29,6 +32,13 @@ class ReminderViewModel(app: Application) : AndroidViewModel(app) {
         repo.observeCheckedSince(startOfTodayUtcMillis())
             .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
+    val checklistItems: StateFlow<List<ChecklistItemRow>> =
+        repo.observeChecklistItems().stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    val checklistChecksToday: StateFlow<List<ChecklistCheckRow>> =
+        repo.observeChecklistChecksOn(java.time.LocalDate.now().toString())
+            .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
     private fun startOfTodayUtcMillis(): Long =
         java.time.LocalDate.now()
             .atStartOfDay(java.time.ZoneId.systemDefault())
@@ -41,8 +51,10 @@ class ReminderViewModel(app: Application) : AndroidViewModel(app) {
         dailyMinuteOfDay: Int?,
         oneTimeDueAtUtc: Long?,
         weeklyDaysMask: Int?,
+        checklist: List<String> = emptyList(),
     ) = viewModelScope.launch {
         val localId = repo.createReminder(description, kind, dailyMinuteOfDay, oneTimeDueAtUtc, weeklyDaysMask)
+        repo.setChecklist(localId, checklist)
         val r = repo.findReminder(localId) ?: return@launch
         ReminderScheduler.scheduleNext(getApplication(), r)
     }
@@ -50,20 +62,74 @@ class ReminderViewModel(app: Application) : AndroidViewModel(app) {
     fun toggleActive(r: ReminderRow) = viewModelScope.launch {
         val updated = r.copy(isActive = !r.isActive)
         repo.updateReminder(updated)
+        ReminderScheduler.cancel(getApplication(), updated.id)
+        clearStaleAlarms(updated)
         if (updated.isActive) ReminderScheduler.scheduleNext(getApplication(), updated)
-        else ReminderScheduler.cancel(getApplication(), updated.id)
+    }
+
+    fun updateSchedule(
+        r: ReminderRow,
+        description: String,
+        kind: ScheduleKind,
+        dailyMinuteOfDay: Int?,
+        oneTimeDueAtUtc: Long?,
+        weeklyDaysMask: Int?,
+        checklist: List<String> = emptyList(),
+    ) = viewModelScope.launch {
+        val updated = r.copy(
+            description = description,
+            scheduleKind = kind,
+            dailyMinuteOfDay = dailyMinuteOfDay,
+            oneTimeDueAtUtc = oneTimeDueAtUtc,
+            weeklyDaysMask = weeklyDaysMask,
+        )
+        repo.updateReminder(updated)
+        repo.setChecklist(updated.id, checklist)
+        ReminderScheduler.cancel(getApplication(), updated.id)
+        clearStaleAlarms(updated)
+        if (updated.isActive) ReminderScheduler.scheduleNext(getApplication(), updated)
+    }
+
+    /**
+     * After an edit / toggle, any unchecked occurrence whose dueAtUtc no longer matches the
+     * reminder's current schedule is stale: stop its hourly re-ring and clear its notification
+     * so the home screen and notification shade reflect the new schedule immediately.
+     */
+    private suspend fun clearStaleAlarms(r: ReminderRow) {
+        val stale = repo.uncheckedOccurrencesFor(r.id)
+            .filterNot { occ -> reminderFiresAt(r, occ.dueAtUtc) }
+        for (occ in stale) {
+            ReminderScheduler.cancelRepeat(getApplication(), occ.id)
+            NotificationHelper.cancel(getApplication(), occ.id)
+        }
     }
 
     fun delete(r: ReminderRow) = viewModelScope.launch {
         ReminderScheduler.cancel(getApplication(), r.id)
         repo.deleteOverridesForReminder(r.id)
+        repo.deleteChecklistForReminder(r.id)
         repo.deleteReminder(r.id)
+    }
+
+    /** Tick or un-tick a checklist sub-item for today (resets each day). */
+    fun toggleChecklistItem(itemId: Long, checked: Boolean) = viewModelScope.launch {
+        repo.setChecklistCheck(itemId, java.time.LocalDate.now().toString(), checked)
     }
 
     fun check(occurrence: OccurrenceRow) = viewModelScope.launch {
         repo.checkOccurrence(occurrence.id)
         ReminderScheduler.cancelRepeat(getApplication(), occurrence.id)
         NotificationHelper.cancel(getApplication(), occurrence.id)
+    }
+
+    /** Check off a reminder before its scheduled time fires today. */
+    fun checkAhead(reminder: ReminderRow, dueAtUtc: Long) = viewModelScope.launch {
+        repo.checkAhead(reminder.id, dueAtUtc)
+        ReminderScheduler.scheduleNextAfter(getApplication(), reminder, dueAtUtc + 1)
+    }
+
+    fun uncheck(occurrence: OccurrenceRow) = viewModelScope.launch {
+        repo.uncheckOccurrence(occurrence.id)
     }
 
     fun observeOverrides(reminderLocalId: Long): Flow<List<ReminderOverrideRow>> =

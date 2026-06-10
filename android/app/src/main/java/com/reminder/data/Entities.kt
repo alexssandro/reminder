@@ -4,7 +4,7 @@ import androidx.room.Entity
 import androidx.room.Index
 import androidx.room.PrimaryKey
 
-enum class ScheduleKind(val api: Int) { Daily(1), OneTime(2), Weekly(3) }
+enum class ScheduleKind(val api: Int) { Daily(1), OneTime(2), Weekly(3), Anytime(4) }
 
 @Entity(tableName = "reminders")
 data class ReminderRow(
@@ -33,6 +33,34 @@ data class ReminderOverrideRow(
     val localDate: String,
     val minuteOfDay: Int,
     val createdAtUtc: Long = System.currentTimeMillis(),
+)
+
+/** A template sub-item belonging to a reminder. The set is shared across all occurrences. */
+@Entity(
+    tableName = "checklist_items",
+    indices = [Index("reminderLocalId")]
+)
+data class ChecklistItemRow(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val reminderLocalId: Long,
+    val text: String,
+    val position: Int,
+    val createdAtUtc: Long = System.currentTimeMillis(),
+)
+
+/**
+ * A sub-item ticked for one local day. Keyed by (item, localDate) so the checklist resets
+ * fresh each occurrence — a row exists only while that sub-item is checked for that date.
+ */
+@Entity(
+    tableName = "checklist_checks",
+    indices = [Index(value = ["checklistItemLocalId", "localDate"], unique = true)]
+)
+data class ChecklistCheckRow(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val checklistItemLocalId: Long,
+    val localDate: String,
+    val checkedAtUtc: Long = System.currentTimeMillis(),
 )
 
 @Entity(

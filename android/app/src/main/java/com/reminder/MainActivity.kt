@@ -13,6 +13,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.ui.graphics.Color
 import androidx.core.content.ContextCompat
+import com.reminder.notifications.DailyPreviewReceiver
 import com.reminder.notifications.DailyPreviewScheduler
 import com.reminder.notifications.NotificationHelper
 import com.reminder.notifications.ReminderScheduler
@@ -47,6 +48,15 @@ class MainActivity : ComponentActivity() {
             val repo = com.reminder.data.ReminderRepository(this@MainActivity)
             for (r in repo.activeReminders()) {
                 ReminderScheduler.scheduleNext(this@MainActivity, r)
+            }
+        }
+
+        // Debug-only verification hook: `adb shell am start -n com.reminder/.MainActivity
+        // --ez fire_preview true` fires the daily preview immediately so it can be checked
+        // after a deploy. No-op in release builds.
+        if (BuildConfig.DEBUG && intent?.getBooleanExtra("fire_preview", false) == true) {
+            CoroutineScope(Dispatchers.IO).launch {
+                DailyPreviewReceiver.buildAndShow(this@MainActivity)
             }
         }
 

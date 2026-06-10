@@ -28,4 +28,7 @@ interface ReminderApi {
 
     @POST("occurrences/{id}/check")
     suspend fun check(@Path("id") id: Int): OccurrenceDto
+
+    @POST("occurrences/{id}/uncheck")
+    suspend fun uncheck(@Path("id") id: Int): OccurrenceDto
 }

@@ -4,7 +4,9 @@ public enum ScheduleKind
 {
     Daily = 1,
     OneTime = 2,
-    Weekly = 3
+    Weekly = 3,
+    // No due date: always available to check off; never fires an alarm.
+    Anytime = 4
 }
 
 public class Reminder

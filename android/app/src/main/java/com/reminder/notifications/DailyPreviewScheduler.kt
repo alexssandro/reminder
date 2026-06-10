@@ -7,11 +7,12 @@ import android.content.Intent
 import android.os.Build
 
 object DailyPreviewScheduler {
-    const val PREVIEW_HOUR = 8
+    /** Local hours-of-day the "today's reminders" preview fires at. */
+    val PREVIEW_HOURS = listOf(9, 12, 18, 21)
     private const val REQUEST_CODE = 999001
 
     fun scheduleNext(ctx: Context, fromMillis: Long = System.currentTimeMillis()) {
-        val triggerAt = nextPreviewAtUtc(fromMillis, PREVIEW_HOUR)
+        val triggerAt = nextPreviewAtUtc(fromMillis, PREVIEW_HOURS)
         val am = ctx.getSystemService(AlarmManager::class.java) ?: return
         val pi = pendingIntent(ctx)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !am.canScheduleExactAlarms()) {

@@ -27,6 +27,17 @@ class ReminderReceiver : BroadcastReceiver() {
                 val reminder = repo.findReminder(reminderLocalId) ?: return@launch
                 if (!reminder.isActive) return@launch
 
+                if (intent.action == ACTION_PRE) {
+                    val offsetMinutes = intent.getIntExtra(EXTRA_PRE_OFFSET_MINUTES, 0)
+                    NotificationHelper.showPre(
+                        ctx,
+                        reminderLocalId = reminderLocalId,
+                        title = reminder.description,
+                        text = "Due in ${formatRemaining(offsetMinutes)}",
+                    )
+                    return@launch
+                }
+
                 val occurrenceLocalId: Long = when (intent.action) {
                     ACTION_FIRE -> repo.recordFire(reminderLocalId, dueAtUtc)
                     ACTION_REPEAT -> intent.getLongExtra(EXTRA_OCCURRENCE_LOCAL_ID, -1L)
@@ -40,6 +51,7 @@ class ReminderReceiver : BroadcastReceiver() {
                     title = reminder.description,
                     text = "Tap to open or mark done.",
                 )
+                NotificationHelper.cancelPre(ctx, reminderLocalId)
 
                 // Re-ring every hour until the user checks.
                 ReminderScheduler.scheduleRepeatReminder(
@@ -63,9 +75,20 @@ class ReminderReceiver : BroadcastReceiver() {
     companion object {
         const val ACTION_FIRE = "com.reminder.FIRE"
         const val ACTION_REPEAT = "com.reminder.REPEAT"
+        const val ACTION_PRE = "com.reminder.PRE"
         const val EXTRA_REMINDER_LOCAL_ID = "reminderLocalId"
         const val EXTRA_OCCURRENCE_LOCAL_ID = "occurrenceLocalId"
         const val EXTRA_DUE_AT_UTC = "dueAtUtc"
+        const val EXTRA_PRE_OFFSET_MINUTES = "preOffsetMinutes"
         private const val HOUR_MILLIS = 60L * 60L * 1000L
+
+        private fun formatRemaining(offsetMinutes: Int): String = when {
+            offsetMinutes >= 60 && offsetMinutes % 60 == 0 -> {
+                val h = offsetMinutes / 60
+                if (h == 1) "1 hour" else "$h hours"
+            }
+            offsetMinutes == 1 -> "1 minute"
+            else -> "$offsetMinutes minutes"
+        }
     }
 }

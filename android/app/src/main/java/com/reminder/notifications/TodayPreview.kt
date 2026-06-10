@@ -62,17 +62,49 @@ fun todayItems(
                         TodayItem(r.id, r.description, minute, r.scheduleKind)
                     } else null
                 }
+                // Anytime reminders have no time-of-day; they're surfaced separately on Home.
+                ScheduleKind.Anytime -> null
             }
         }
         .sortedBy { it.minuteOfDay }
         .toList()
 }
 
-/** Next 08:00 local after [fromMillis]. */
-fun nextPreviewAtUtc(fromMillis: Long, previewHour: Int = 8): Long {
+/**
+ * True when [r]'s current schedule would still fire at [occDueAtUtc].
+ *
+ * Used to detect *stale* pending occurrences after an edit: if the answer is false, the
+ * reminder has been rescheduled / disabled / re-kinded since this occurrence was recorded,
+ * so the home screen should hide it and the alarm chain should be torn down. [override]
+ * is the override minute-of-day for the occurrence's local date, if any.
+ */
+fun reminderFiresAt(r: ReminderRow, occDueAtUtc: Long, override: Int? = null): Boolean {
+    if (!r.isActive) return false
+    val zone = ZoneId.systemDefault()
+    val ldt = LocalDateTime.ofInstant(Instant.ofEpochMilli(occDueAtUtc), zone)
+    val occMinute = ldt.hour * 60 + ldt.minute
+    return when (r.scheduleKind) {
+        ScheduleKind.Daily -> (override ?: r.dailyMinuteOfDay) == occMinute
+        ScheduleKind.Weekly -> {
+            val mask = r.weeklyDaysMask ?: 0
+            val bit = 1 shl (ldt.toLocalDate().dayOfWeek.value % 7)
+            (mask and bit) != 0 && r.dailyMinuteOfDay == occMinute
+        }
+        ScheduleKind.OneTime -> r.oneTimeDueAtUtc == occDueAtUtc
+        // No scheduled fire time, so no occurrence is ever pinned to one.
+        ScheduleKind.Anytime -> false
+    }
+}
+
+/** Soonest local preview slot (one of [hours], on-the-hour) strictly after [fromMillis]. */
+fun nextPreviewAtUtc(fromMillis: Long, hours: List<Int>): Long {
     val zone = ZoneId.systemDefault()
     val now = LocalDateTime.ofInstant(Instant.ofEpochMilli(fromMillis), zone)
-    val todayAt = LocalDateTime.of(now.toLocalDate(), LocalTime.of(previewHour, 0))
-    val target = if (todayAt.isAfter(now)) todayAt else todayAt.plusDays(1)
-    return target.atZone(zone).toInstant().toEpochMilli()
+    val today = now.toLocalDate()
+    // Scan today's and tomorrow's slots; tomorrow guarantees a hit once today's are all past.
+    val next = (0L..1L)
+        .flatMap { dayOffset -> hours.map { h -> LocalDateTime.of(today.plusDays(dayOffset), LocalTime.of(h, 0)) } }
+        .filter { it.isAfter(now) }
+        .minOrNull()!!
+    return next.atZone(zone).toInstant().toEpochMilli()
 }

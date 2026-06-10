@@ -41,9 +41,46 @@ private val MIGRATION_2_3 = object : Migration(2, 3) {
     }
 }
 
+private val MIGRATION_3_4 = object : Migration(3, 4) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS `checklist_items` (
+                `id` INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+                `reminderLocalId` INTEGER NOT NULL,
+                `text` TEXT NOT NULL,
+                `position` INTEGER NOT NULL,
+                `createdAtUtc` INTEGER NOT NULL
+            )
+            """.trimIndent()
+        )
+        db.execSQL(
+            "CREATE INDEX IF NOT EXISTS `index_checklist_items_reminderLocalId` " +
+                "ON `checklist_items` (`reminderLocalId`)"
+        )
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS `checklist_checks` (
+                `id` INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+                `checklistItemLocalId` INTEGER NOT NULL,
+                `localDate` TEXT NOT NULL,
+                `checkedAtUtc` INTEGER NOT NULL
+            )
+            """.trimIndent()
+        )
+        db.execSQL(
+            "CREATE UNIQUE INDEX IF NOT EXISTS `index_checklist_checks_checklistItemLocalId_localDate` " +
+                "ON `checklist_checks` (`checklistItemLocalId`, `localDate`)"
+        )
+    }
+}
+
 @Database(
-    entities = [ReminderRow::class, OccurrenceRow::class, ReminderOverrideRow::class],
-    version = 3,
+    entities = [
+        ReminderRow::class, OccurrenceRow::class, ReminderOverrideRow::class,
+        ChecklistItemRow::class, ChecklistCheckRow::class,
+    ],
+    version = 4,
     exportSchema = false
 )
 @TypeConverters(Converters::class)
@@ -51,6 +88,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun reminders(): ReminderDao
     abstract fun occurrences(): OccurrenceDao
     abstract fun overrides(): ReminderOverrideDao
+    abstract fun checklist(): ChecklistDao
 
     companion object {
         @Volatile private var INSTANCE: AppDatabase? = null
@@ -62,7 +100,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "reminder.db"
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
                     .build().also { INSTANCE = it }
             }
     }

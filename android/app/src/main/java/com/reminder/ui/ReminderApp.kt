@@ -3,6 +3,10 @@ package com.reminder.ui
 import android.widget.Toast
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
@@ -30,6 +34,7 @@ import androidx.compose.material.icons.outlined.CalendarMonth
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.EditCalendar
 import androidx.compose.material.icons.outlined.Event
+import androidx.compose.material.icons.outlined.EventRepeat
 import androidx.compose.material.icons.outlined.NotificationsActive
 import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material.icons.outlined.Tune
@@ -58,6 +63,7 @@ import com.reminder.data.ReminderRow
 import com.reminder.data.ScheduleKind
 import com.reminder.notifications.DailyPreviewReceiver
 import com.reminder.notifications.TodayItem
+import com.reminder.notifications.monthlyAvailableOn
 import com.reminder.notifications.todayItems
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -70,22 +76,23 @@ import java.time.ZoneId
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
 
-// --- Palette — cold tones (icy blue / cyan / indigo) ---
-private val DarkBg = Color(0xFF0A1628)
-private val DarkCard = Color(0xFF14243D)
-private val DarkCardLight = Color(0xFF1B2E4A)
-private val TextPrimary = Color(0xFFE8F0FA)
-private val TextSecondary = Color(0xFF8FA4BF)
-private val TextMuted = Color(0xFF556074)
-private val AccentGradientStart = Color(0xFF22D3EE)
-private val AccentGradientEnd = Color(0xFF6366F1)
-private val AccentBlue = Color(0xFF38BDF8)
-private val AccentBlueBright = Color(0xFF7DD3FC)
-private val GreenAccent = Color(0xFF34D399)
-private val GreenSurface = Color(0xFF134E4A)
-private val RedAccent = Color(0xFFF472B6)
-private val WarmYellow = Color(0xFFA5B4FC)
-private val VioletAccent = Color(0xFFA78BFA)
+// --- Palette — Windows Terminal "Campbell" scheme: terminal look ---
+private val DarkBg = Color(0xFF0C0C0C)
+private val DarkCard = Color(0xFF161616)
+private val DarkCardLight = Color(0xFF222222)
+private val TextPrimary = Color(0xFFCCCCCC)
+private val TextSecondary = Color(0xFF9E9E9E)
+private val TextMuted = Color(0xFF767676)
+private val AccentGradientStart = Color(0xFF16C60C)
+private val AccentGradientEnd = Color(0xFF13A10E)
+private val AccentBlue = Color(0xFF3A96DD)
+private val AccentBlueBright = Color(0xFF61D6D6)
+private val GreenAccent = Color(0xFF16C60C)
+private val GreenSurface = Color(0xFF0D2E0B)
+private val RedAccent = Color(0xFFE74856)
+private val WarmYellow = Color(0xFFF9F1A5)
+private val VioletAccent = Color(0xFFB4009E)
+private val TealAccent = Color(0xFF61D6D6)
 
 private enum class Screen { Home, Manage }
 
@@ -138,10 +145,20 @@ private fun HomeScreen(vm: ReminderViewModel, onOpenManage: () -> Unit) {
             it.id !in touched
     }
 
+    // Monthly reminders surface only on their chosen day of the month (clamped in short months).
+    val todayDate = LocalDate.now()
+    val monthlyItems = reminders.filter {
+        it.isActive && !it.pendingDelete &&
+            it.scheduleKind == ScheduleKind.Monthly &&
+            it.monthlyDayOfMonth?.let { d -> monthlyAvailableOn(todayDate, d) } == true &&
+            it.id !in touched
+    }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(DarkBg),
+            .background(DarkBg)
+            .statusBarsPadding(),
     ) {
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
@@ -151,17 +168,20 @@ private fun HomeScreen(vm: ReminderViewModel, onOpenManage: () -> Unit) {
             item {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
-                        Text(
-                            "Reminder",
-                            style = MaterialTheme.typography.headlineMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = TextPrimary,
-                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                "reminder:~$ ",
+                                style = MaterialTheme.typography.headlineMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = GreenAccent,
+                            )
+                            BlinkingCursor()
+                        }
                         Spacer(Modifier.height(4.dp))
                         Text(
-                            "Your daily check-ins",
+                            "// your daily check-ins",
                             style = MaterialTheme.typography.bodyMedium,
-                            color = TextSecondary,
+                            color = TextMuted,
                         )
                     }
                     IconButton(onClick = onOpenManage) {
@@ -226,15 +246,18 @@ private fun HomeScreen(vm: ReminderViewModel, onOpenManage: () -> Unit) {
                 }
             }
 
-            if (anytimeItems.isNotEmpty()) {
+            if (monthlyItems.isNotEmpty()) {
                 if (needsAttention || laterToday.isNotEmpty()) item { Spacer(Modifier.height(4.dp)) }
-                item { SectionHeader("Anytime") }
-                items(anytimeItems, key = { "a${it.id}" }) { reminder ->
-                    AnytimeRow(
+                item { SectionHeader("Today's monthly") }
+                items(monthlyItems, key = { "mo${it.id}" }) { reminder ->
+                    UntimedRow(
                         reminder,
-                        checklistByReminder[reminder.id].orEmpty(),
-                        checkedItemIds,
-                        vm::toggleChecklistItem,
+                        label = "Monthly · day ${reminder.monthlyDayOfMonth}",
+                        icon = Icons.Outlined.EventRepeat,
+                        tint = TealAccent,
+                        checklist = checklistByReminder[reminder.id].orEmpty(),
+                        checkedItemIds = checkedItemIds,
+                        onToggleChecklistItem = vm::toggleChecklistItem,
                     ) {
                         vm.checkAhead(reminder, nowMs)
                         confettiTrigger++
@@ -242,7 +265,28 @@ private fun HomeScreen(vm: ReminderViewModel, onOpenManage: () -> Unit) {
                 }
             }
 
-            if (!needsAttention && laterToday.isEmpty() && anytimeItems.isEmpty()) {
+            if (anytimeItems.isNotEmpty()) {
+                if (needsAttention || laterToday.isNotEmpty() || monthlyItems.isNotEmpty()) {
+                    item { Spacer(Modifier.height(4.dp)) }
+                }
+                item { SectionHeader("Anytime") }
+                items(anytimeItems, key = { "a${it.id}" }) { reminder ->
+                    UntimedRow(
+                        reminder,
+                        label = "Anytime",
+                        icon = Icons.Outlined.AllInclusive,
+                        tint = VioletAccent,
+                        checklist = checklistByReminder[reminder.id].orEmpty(),
+                        checkedItemIds = checkedItemIds,
+                        onToggleChecklistItem = vm::toggleChecklistItem,
+                    ) {
+                        vm.checkAhead(reminder, nowMs)
+                        confettiTrigger++
+                    }
+                }
+            }
+
+            if (!needsAttention && laterToday.isEmpty() && anytimeItems.isEmpty() && monthlyItems.isEmpty()) {
                 if (reminders.isEmpty()) {
                     item { HomeEmptyState(onOpenManage) }
                 } else if (checkedToday.isEmpty()) {
@@ -276,7 +320,7 @@ private fun HomeScreen(vm: ReminderViewModel, onOpenManage: () -> Unit) {
 private fun HomeAllCaughtUp() {
     Surface(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(18.dp),
+        shape = RoundedCornerShape(2.dp),
         color = DarkCard,
     ) {
         Row(
@@ -298,7 +342,7 @@ private fun HomeAllCaughtUp() {
 private fun HomeEmptyState(onOpenManage: () -> Unit) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(18.dp),
+        shape = RoundedCornerShape(2.dp),
         color = DarkCard,
     ) {
         Column(
@@ -341,7 +385,8 @@ private fun ManageScreen(vm: ReminderViewModel, onBack: () -> Unit) {
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(DarkBg),
+            .background(DarkBg)
+            .statusBarsPadding(),
     ) {
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
@@ -365,15 +410,15 @@ private fun ManageScreen(vm: ReminderViewModel, onBack: () -> Unit) {
                     Spacer(Modifier.width(4.dp))
                     Column {
                         Text(
-                            "Manage reminders",
+                            "reminder:~/manage$",
                             style = MaterialTheme.typography.headlineSmall,
                             fontWeight = FontWeight.Bold,
-                            color = TextPrimary,
+                            color = GreenAccent,
                         )
                         Text(
-                            "Create, toggle, override, or delete",
+                            "// create, toggle, override, delete",
                             style = MaterialTheme.typography.bodySmall,
-                            color = TextSecondary,
+                            color = TextMuted,
                         )
                     }
                 }
@@ -455,11 +500,11 @@ private fun ManageScreen(vm: ReminderViewModel, onBack: () -> Unit) {
             initial = target,
             initialChecklist = initialChecklist,
             onDismiss = { showCreate = false; editFor = null },
-            onSave = { description, kind, minuteOfDay, oneTimeUtc, weeklyMask, checklist ->
+            onSave = { description, kind, minuteOfDay, oneTimeUtc, weeklyMask, monthDay, checklist ->
                 if (target != null) {
-                    vm.updateSchedule(target, description, kind, minuteOfDay, oneTimeUtc, weeklyMask, checklist)
+                    vm.updateSchedule(target, description, kind, minuteOfDay, oneTimeUtc, weeklyMask, monthDay, checklist)
                 } else {
-                    vm.createReminder(description, kind, minuteOfDay, oneTimeUtc, weeklyMask, checklist)
+                    vm.createReminder(description, kind, minuteOfDay, oneTimeUtc, weeklyMask, monthDay, checklist)
                 }
                 showCreate = false
                 editFor = null
@@ -499,7 +544,7 @@ private fun ManageScreen(vm: ReminderViewModel, onBack: () -> Unit) {
                 )
             },
             containerColor = DarkCard,
-            shape = RoundedCornerShape(20.dp),
+            shape = RoundedCornerShape(2.dp),
         )
     }
 }
@@ -514,7 +559,7 @@ private fun ManageRow(
 ) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(18.dp),
+        shape = RoundedCornerShape(2.dp),
         color = DarkCard,
     ) {
         Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)) {
@@ -607,11 +652,31 @@ private fun ManageRow(
 @Composable
 private fun SectionHeader(text: String) {
     Text(
-        text.uppercase(),
+        "> " + text.lowercase(),
         style = MaterialTheme.typography.labelMedium,
         fontWeight = FontWeight.SemiBold,
-        color = TextMuted,
+        color = GreenAccent,
         modifier = Modifier.padding(top = 8.dp, bottom = 2.dp),
+    )
+}
+
+/** Solid block cursor blinking at terminal cadence next to the prompt header. */
+@Composable
+private fun BlinkingCursor() {
+    val transition = rememberInfiniteTransition(label = "cursor")
+    val alpha by transition.animateFloat(
+        initialValue = 1f,
+        targetValue = 0f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 530, easing = LinearEasing),
+            repeatMode = RepeatMode.Reverse,
+        ),
+        label = "cursorAlpha",
+    )
+    Text(
+        "█",
+        style = MaterialTheme.typography.headlineMedium,
+        color = GreenAccent.copy(alpha = alpha),
     )
 }
 
@@ -626,7 +691,7 @@ private fun PendingRow(
 ) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(18.dp),
+        shape = RoundedCornerShape(2.dp),
         color = DarkCard,
         border = BorderStroke(1.dp, WarmYellow.copy(alpha = 0.35f)),
     ) {
@@ -670,7 +735,7 @@ private fun DoneRow(
 ) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(18.dp),
+        shape = RoundedCornerShape(2.dp),
         color = GreenSurface.copy(alpha = 0.55f),
         border = BorderStroke(1.dp, GreenAccent.copy(alpha = 0.45f)),
     ) {
@@ -741,7 +806,7 @@ private fun OverdueRow(
 ) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(18.dp),
+        shape = RoundedCornerShape(2.dp),
         color = DarkCard,
         border = BorderStroke(1.dp, WarmYellow.copy(alpha = 0.35f)),
     ) {
@@ -803,13 +868,14 @@ private fun ScheduleIcon(kind: ScheduleKind, unsynced: Boolean = false) {
         ScheduleKind.OneTime -> Triple(Icons.Outlined.Event, GreenAccent, "One-time")
         ScheduleKind.Weekly -> Triple(Icons.Outlined.CalendarMonth, WarmYellow, "Weekly")
         ScheduleKind.Anytime -> Triple(Icons.Outlined.AllInclusive, VioletAccent, "Anytime")
+        ScheduleKind.Monthly -> Triple(Icons.Outlined.EventRepeat, TealAccent, "Monthly")
     }
     Box(modifier = Modifier.size(44.dp)) {
         Box(
             modifier = Modifier
                 .size(40.dp)
                 .align(Alignment.Center)
-                .clip(RoundedCornerShape(12.dp))
+                .clip(RoundedCornerShape(2.dp))
                 .background(tint.copy(alpha = 0.12f)),
             contentAlignment = Alignment.Center,
         ) {
@@ -853,7 +919,7 @@ private fun UpcomingRow(
 ) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(18.dp),
+        shape = RoundedCornerShape(2.dp),
         color = DarkCard,
         border = BorderStroke(1.dp, DarkCardLight),
     ) {
@@ -868,6 +934,7 @@ private fun UpcomingRow(
                         ScheduleKind.OneTime -> Icons.Outlined.Event
                         ScheduleKind.Weekly -> Icons.Outlined.CalendarMonth
                         ScheduleKind.Anytime -> Icons.Outlined.AllInclusive
+                        ScheduleKind.Monthly -> Icons.Outlined.EventRepeat
                     },
                     contentDescription = null,
                     tint = AccentBlueBright,
@@ -896,9 +963,13 @@ private fun UpcomingRow(
     }
 }
 
+/** Row for reminders with no time-of-day (Anytime, Monthly): just a label and a check. */
 @Composable
-private fun AnytimeRow(
+private fun UntimedRow(
     reminder: ReminderRow,
+    label: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    tint: Color,
     checklist: List<ChecklistItemRow>,
     checkedItemIds: Set<Long>,
     onToggleChecklistItem: (itemId: Long, checked: Boolean) -> Unit,
@@ -906,9 +977,9 @@ private fun AnytimeRow(
 ) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(18.dp),
+        shape = RoundedCornerShape(2.dp),
         color = DarkCard,
-        border = BorderStroke(1.dp, VioletAccent.copy(alpha = 0.35f)),
+        border = BorderStroke(1.dp, tint.copy(alpha = 0.35f)),
     ) {
         Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)) {
             Row(
@@ -916,9 +987,9 @@ private fun AnytimeRow(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Icon(
-                    Icons.Outlined.AllInclusive,
+                    icon,
                     contentDescription = null,
-                    tint = VioletAccent,
+                    tint = tint,
                     modifier = Modifier.size(22.dp),
                 )
                 Spacer(Modifier.width(14.dp))
@@ -931,9 +1002,9 @@ private fun AnytimeRow(
                     )
                     Spacer(Modifier.height(2.dp))
                     Text(
-                        "Anytime",
+                        label,
                         style = MaterialTheme.typography.labelSmall,
-                        color = VioletAccent,
+                        color = tint,
                     )
                 }
                 Spacer(Modifier.width(10.dp))
@@ -961,17 +1032,17 @@ private fun ChecklistBlock(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clip(RoundedCornerShape(8.dp))
+                    .clip(RoundedCornerShape(2.dp))
                     .clickable { onToggle(item.id, !checked) },
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Box(
                     modifier = Modifier
                         .size(20.dp)
-                        .clip(RoundedCornerShape(6.dp))
+                        .clip(RoundedCornerShape(2.dp))
                         .then(
                             if (checked) Modifier.background(GreenAccent)
-                            else Modifier.border(1.5.dp, TextMuted, RoundedCornerShape(6.dp))
+                            else Modifier.border(1.5.dp, TextMuted, RoundedCornerShape(2.dp))
                         ),
                     contentAlignment = Alignment.Center,
                 ) {
@@ -1007,7 +1078,7 @@ private fun dueAtUtcForToday(minuteOfDay: Int): Long =
 private fun EmptyState() {
     Surface(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(18.dp),
+        shape = RoundedCornerShape(2.dp),
         color = DarkCard,
     ) {
         Column(
@@ -1042,7 +1113,7 @@ private fun GradientButton(label: String, enabled: Boolean = true, onClick: () -
         modifier = Modifier
             .fillMaxWidth()
             .height(54.dp),
-        shape = RoundedCornerShape(27.dp),
+        shape = RoundedCornerShape(2.dp),
         colors = ButtonDefaults.buttonColors(containerColor = Color.Transparent),
         contentPadding = PaddingValues(),
     ) {
@@ -1053,13 +1124,13 @@ private fun GradientButton(label: String, enabled: Boolean = true, onClick: () -
                     brush = Brush.horizontalGradient(
                         listOf(AccentGradientStart, AccentGradientEnd),
                     ),
-                    shape = RoundedCornerShape(27.dp),
+                    shape = RoundedCornerShape(2.dp),
                 ),
             contentAlignment = Alignment.Center,
         ) {
             Text(
                 label,
-                color = Color.White,
+                color = Color.Black,
                 fontWeight = FontWeight.Bold,
                 fontSize = 17.sp,
             )
@@ -1081,6 +1152,7 @@ private fun scheduleSummary(r: ReminderRow): String = when (r.scheduleKind) {
         else "Weekly on %s at %02d:%02d".format(days.joinToString(", "), m / 60, m % 60)
     }
     ScheduleKind.Anytime -> "Anytime · no due date"
+    ScheduleKind.Monthly -> "Monthly on day ${r.monthlyDayOfMonth ?: 1}"
 }
 
 private val WeekdayShort = listOf("Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat")
@@ -1099,7 +1171,7 @@ private fun ReminderEditorDialog(
     initial: ReminderRow?,
     initialChecklist: List<String>,
     onDismiss: () -> Unit,
-    onSave: (description: String, kind: ScheduleKind, dailyMinuteOfDay: Int?, oneTimeUtc: Long?, weeklyDaysMask: Int?, checklist: List<String>) -> Unit,
+    onSave: (description: String, kind: ScheduleKind, dailyMinuteOfDay: Int?, oneTimeUtc: Long?, weeklyDaysMask: Int?, monthlyDayOfMonth: Int?, checklist: List<String>) -> Unit,
 ) {
     val zone = remember { ZoneId.systemDefault() }
     val initialOneTimeLdt = remember(initial?.id) {
@@ -1120,6 +1192,9 @@ private fun ReminderEditorDialog(
     var month by rememberSaveable(initial?.id) { mutableStateOf(initialOneTimeLdt?.monthValue ?: today.monthValue) }
     var day by rememberSaveable(initial?.id) { mutableStateOf(initialOneTimeLdt?.dayOfMonth ?: today.dayOfMonth) }
     var weeklyMask by rememberSaveable(initial?.id) { mutableStateOf(initial?.weeklyDaysMask ?: 0) }
+    var monthDayText by rememberSaveable(initial?.id) {
+        mutableStateOf((initial?.monthlyDayOfMonth ?: today.dayOfMonth).toString())
+    }
     val checklistDraft = remember(initial?.id) {
         mutableStateListOf<String>().apply { addAll(initialChecklist) }
     }
@@ -1191,17 +1266,24 @@ private fun ReminderEditorDialog(
                         modifier = Modifier.weight(1f),
                     )
                     KindChip(
-                        label = "Anytime",
-                        icon = Icons.Outlined.AllInclusive,
-                        selected = kind == ScheduleKind.Anytime,
-                        onClick = { kind = ScheduleKind.Anytime },
+                        label = "Monthly",
+                        icon = Icons.Outlined.EventRepeat,
+                        selected = kind == ScheduleKind.Monthly,
+                        onClick = { kind = ScheduleKind.Monthly },
                         modifier = Modifier.weight(1f),
                     )
                 }
+                KindChip(
+                    label = "Anytime",
+                    icon = Icons.Outlined.AllInclusive,
+                    selected = kind == ScheduleKind.Anytime,
+                    onClick = { kind = ScheduleKind.Anytime },
+                    modifier = Modifier.fillMaxWidth(),
+                )
             }
 
-            // Anytime reminders have no due date, so they need no time/date inputs.
-            if (kind != ScheduleKind.Anytime) {
+            // Anytime and Monthly reminders have no due time, so they need no time input.
+            if (kind != ScheduleKind.Anytime && kind != ScheduleKind.Monthly) {
                 FieldLabel("Time")
                 TimeFieldButton(hour = hour, minute = minute) { h, m -> hour = h; minute = m }
             }
@@ -1218,6 +1300,20 @@ private fun ReminderEditorDialog(
                 WeekdaySelector(mask = weeklyMask, onChange = { weeklyMask = it })
             }
 
+            if (kind == ScheduleKind.Monthly) {
+                FieldLabel("Day of month (1–31)")
+                DarkField(
+                    value = monthDayText,
+                    onChange = { text -> monthDayText = text.filter { it.isDigit() }.take(2) },
+                    label = "Day",
+                )
+                Text(
+                    "Available to check off on that day each month. Months with fewer days use their last day. No alarm.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = TextSecondary,
+                )
+            }
+
             if (kind == ScheduleKind.Anytime) {
                 Text(
                     "Always available to check off. No alarm or due time.",
@@ -1229,28 +1325,31 @@ private fun ReminderEditorDialog(
             ChecklistEditor(items = checklistDraft)
 
             Spacer(Modifier.height(4.dp))
+            val monthDay = monthDayText.toIntOrNull()
             val canSave = description.isNotBlank() &&
-                (kind != ScheduleKind.Weekly || (weeklyMask and 0x7F) != 0)
+                (kind != ScheduleKind.Weekly || (weeklyMask and 0x7F) != 0) &&
+                (kind != ScheduleKind.Monthly || (monthDay != null && monthDay in 1..31))
             GradientButton(
                 label = actionLabel,
                 enabled = canSave,
                 onClick = {
                     val checklist = checklistDraft.toList()
                     when (kind) {
-                        ScheduleKind.Daily -> onSave(description.trim(), kind, hour * 60 + minute, null, null, checklist)
+                        ScheduleKind.Daily -> onSave(description.trim(), kind, hour * 60 + minute, null, null, null, checklist)
                         ScheduleKind.OneTime -> {
                             val ldt = LocalDateTime.of(
                                 LocalDate.of(year, month, day),
                                 LocalTime.of(hour, minute),
                             )
                             val millis = ldt.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
-                            onSave(description.trim(), kind, null, millis, null, checklist)
+                            onSave(description.trim(), kind, null, millis, null, null, checklist)
                         }
                         ScheduleKind.Weekly -> onSave(
-                            description.trim(), kind, hour * 60 + minute, null, weeklyMask and 0x7F, checklist,
+                            description.trim(), kind, hour * 60 + minute, null, weeklyMask and 0x7F, null, checklist,
                         )
                         // No schedule fields — always available to check off.
-                        ScheduleKind.Anytime -> onSave(description.trim(), kind, null, null, null, checklist)
+                        ScheduleKind.Anytime -> onSave(description.trim(), kind, null, null, null, null, checklist)
+                        ScheduleKind.Monthly -> onSave(description.trim(), kind, null, null, null, monthDay, checklist)
                     }
                 },
             )
@@ -1336,7 +1435,7 @@ private fun OverrideDialog(
                 overrides.forEach { o ->
                     Surface(
                         modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(12.dp),
+                        shape = RoundedCornerShape(2.dp),
                         color = DarkCard,
                     ) {
                         Row(
@@ -1377,7 +1476,7 @@ private fun OverrideDialog(
 private fun Dialog(onDismiss: () -> Unit, content: @Composable () -> Unit) {
     androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {
         Surface(
-            shape = RoundedCornerShape(24.dp),
+            shape = RoundedCornerShape(2.dp),
             color = DarkBg,
             border = BorderStroke(1.dp, DarkCardLight),
         ) {
@@ -1398,7 +1497,7 @@ private fun KindChip(
 ) {
     Surface(
         modifier = modifier.clickable(onClick = onClick),
-        shape = RoundedCornerShape(14.dp),
+        shape = RoundedCornerShape(2.dp),
         color = if (selected) AccentBlue.copy(alpha = 0.18f) else DarkCard,
         border = if (selected)
             BorderStroke(1.5.dp, AccentBlueBright)
@@ -1437,7 +1536,7 @@ private fun DarkField(value: String, onChange: (String) -> Unit, label: String) 
         label = { Text(label) },
         modifier = Modifier.fillMaxWidth(),
         singleLine = true,
-        shape = RoundedCornerShape(14.dp),
+        shape = RoundedCornerShape(2.dp),
         colors = OutlinedTextFieldDefaults.colors(
             focusedTextColor = TextPrimary,
             unfocusedTextColor = TextPrimary,
@@ -1464,7 +1563,7 @@ private fun ChecklistEditor(items: MutableList<String>) {
                     placeholder = { Text("Sub-item", color = TextMuted) },
                     modifier = Modifier.weight(1f),
                     singleLine = true,
-                    shape = RoundedCornerShape(12.dp),
+                    shape = RoundedCornerShape(2.dp),
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedTextColor = TextPrimary,
                         unfocusedTextColor = TextPrimary,
@@ -1507,7 +1606,7 @@ private fun WeekdaySelector(mask: Int, onChange: (Int) -> Unit) {
                 modifier = Modifier
                     .weight(1f)
                     .clickable { onChange(mask xor (1 shl i)) },
-                shape = RoundedCornerShape(12.dp),
+                shape = RoundedCornerShape(2.dp),
                 color = if (selected) AccentBlue.copy(alpha = 0.22f) else DarkCard,
                 border = BorderStroke(
                     if (selected) 1.5.dp else 1.dp,
@@ -1554,7 +1653,7 @@ private fun DateFieldButton(
         modifier = Modifier
             .fillMaxWidth()
             .clickable { open = true },
-        shape = RoundedCornerShape(14.dp),
+        shape = RoundedCornerShape(2.dp),
         color = DarkCard,
         border = BorderStroke(1.dp, DarkCardLight),
     ) {
@@ -1611,7 +1710,7 @@ private fun TimeFieldButton(
         modifier = Modifier
             .fillMaxWidth()
             .clickable { open = true },
-        shape = RoundedCornerShape(14.dp),
+        shape = RoundedCornerShape(2.dp),
         color = DarkCard,
         border = BorderStroke(1.dp, DarkCardLight),
     ) {

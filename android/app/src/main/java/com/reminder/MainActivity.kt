@@ -63,12 +63,13 @@ class MainActivity : ComponentActivity() {
         setContent {
             MaterialTheme(
                 colorScheme = darkColorScheme(
-                    background = Color(0xFF0A1628),
-                    surface = Color(0xFF0A1628),
-                    primary = Color(0xFF22D3EE),
-                    onBackground = Color(0xFFE8F0FA),
-                    onSurface = Color(0xFFE8F0FA),
+                    background = Color(0xFF0C0C0C),
+                    surface = Color(0xFF0C0C0C),
+                    primary = Color(0xFF16C60C),
+                    onBackground = Color(0xFFCCCCCC),
+                    onSurface = Color(0xFFCCCCCC),
                 ),
+                typography = com.reminder.ui.AppTypography,
             ) {
                 Surface { ReminderApp(viewModel) }
             }

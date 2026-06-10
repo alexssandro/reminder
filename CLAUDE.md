@@ -30,6 +30,13 @@ dotnet ef migrations add <Name>
 - `ReminderScheduler.scheduleNext` schedules the *primary* fire.
 - When an alarm fires, `ReminderReceiver` records an occurrence, shows the notification, and schedules a +1h `ACTION_REPEAT`. The repeat chain continues until `ReminderActionReceiver.ACTION_CHECK` (from the "Mark done" button) or the in-app check cancels it.
 - Daily reminders also chain their *next day* primary fire from the receiver — don't rely on repeating alarms; each fire schedules the one after it.
+- `scheduleNextAfter` also sets pre-fire countdown notifications at 1h/30m/10m before the primary (`ACTION_PRE`); they reuse one notification id per reminder so they replace each other, and are cleared when the primary fires.
+- The daily preview (`DailyPreviewScheduler`, slots 9/12/18/21 local) lists today's still-open items (timed + Anytime + Monthly). It skips reminders already checked today and posts nothing when the list is empty. Each fire chains the next slot.
+
+## Dev workflow
+
+- `android/deploy.ps1` builds the debug APK, installs it on the connected device, and cold-starts the app with `--ez fire_preview true` so the daily preview fires as a smoke check. The `fire_preview` hook is read only in `onCreate`, so a cold start (force-stop first) is required.
+- Debug builds expose a "Send test notification" button at the bottom of the Manage screen; it calls the same `DailyPreviewReceiver.buildAndShow` path and toasts whether the preview fired or was skipped.
 
 ## Secrets
 

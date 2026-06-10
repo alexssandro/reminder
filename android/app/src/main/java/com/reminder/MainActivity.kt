@@ -60,6 +60,28 @@ class MainActivity : ComponentActivity() {
             }
         }
 
+        // Debug-only demo seed for docs screenshots: `--ez seed_demo true` on a fresh install
+        // creates generic reminders (one pre-checked) so captures never contain real data.
+        if (BuildConfig.DEBUG && intent?.getBooleanExtra("seed_demo", false) == true) {
+            CoroutineScope(Dispatchers.IO).launch {
+                val repo = com.reminder.data.ReminderRepository(this@MainActivity)
+                val workout = repo.createReminder(
+                    "Workout", com.reminder.data.ScheduleKind.Daily, 8 * 60, null, null, null)
+                repo.setChecklist(workout, listOf("Stretch", "Push-ups", "Plank"))
+                repo.createReminder(
+                    "Read 20 pages", com.reminder.data.ScheduleKind.Daily, 21 * 60 + 30, null, null, null)
+                repo.createReminder(
+                    "Team standup", com.reminder.data.ScheduleKind.Weekly, 9 * 60 + 30, null, 0b0101010, null)
+                repo.createReminder(
+                    "Pay rent", com.reminder.data.ScheduleKind.Monthly, null, null, null, 5)
+                repo.createReminder(
+                    "Water the plants", com.reminder.data.ScheduleKind.Anytime, null, null, null, null)
+                val drink = repo.createReminder(
+                    "Drink water", com.reminder.data.ScheduleKind.Anytime, null, null, null, null)
+                repo.checkAhead(drink, System.currentTimeMillis())
+            }
+        }
+
         setContent {
             MaterialTheme(
                 colorScheme = darkColorScheme(

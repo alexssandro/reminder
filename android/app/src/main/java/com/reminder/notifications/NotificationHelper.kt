@@ -112,7 +112,8 @@ object NotificationHelper {
     fun showDailyPreview(
         ctx: Context,
         items: List<TodayItem>,
-        anytimeDescriptions: List<String> = emptyList(),
+        // Pre-formatted lines for no-time-of-day reminders, e.g. "Anytime  Water plants".
+        untimedLines: List<String> = emptyList(),
     ) {
         ensureChannel(ctx)
 
@@ -125,9 +126,8 @@ object NotificationHelper {
         )
 
         val timedLines = items.map { "${it.timeLabel}  ${it.description}" }
-        val anytimeLines = anytimeDescriptions.map { "Anytime  $it" }
-        val body = (timedLines + anytimeLines).joinToString("\n")
-        val total = items.size + anytimeDescriptions.size
+        val body = (timedLines + untimedLines).joinToString("\n")
+        val total = items.size + untimedLines.size
         val summary = ctx.resources.getQuantityString(
             R.plurals.preview_items_count, total, total,
         )

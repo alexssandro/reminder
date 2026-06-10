@@ -4,7 +4,7 @@ import androidx.room.Entity
 import androidx.room.Index
 import androidx.room.PrimaryKey
 
-enum class ScheduleKind(val api: Int) { Daily(1), OneTime(2), Weekly(3), Anytime(4) }
+enum class ScheduleKind(val api: Int) { Daily(1), OneTime(2), Weekly(3), Anytime(4), Monthly(5) }
 
 @Entity(tableName = "reminders")
 data class ReminderRow(
@@ -15,6 +15,8 @@ data class ReminderRow(
     val dailyMinuteOfDay: Int? = null,
     val oneTimeDueAtUtc: Long? = null,
     val weeklyDaysMask: Int? = null,
+    // Monthly: day of month 1..31; months with fewer days clamp to their last day.
+    val monthlyDayOfMonth: Int? = null,
     val isActive: Boolean = true,
     val createdAtUtc: Long = System.currentTimeMillis(),
     val updatedAtLocal: Long = System.currentTimeMillis(),

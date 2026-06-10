@@ -10,6 +10,7 @@ data class ReminderDto(
     val dailyMinuteOfDay: Int? = null,
     val oneTimeDueAtUtc: String? = null,
     val weeklyDaysMask: Int? = null,
+    val monthlyDayOfMonth: Int? = null,
     val isActive: Boolean,
     val createdAtUtc: String,
 )
@@ -21,6 +22,7 @@ data class CreateReminderRequest(
     val dailyMinuteOfDay: Int? = null,
     val oneTimeDueAtUtc: String? = null,
     val weeklyDaysMask: Int? = null,
+    val monthlyDayOfMonth: Int? = null,
 )
 
 @Serializable
@@ -30,6 +32,7 @@ data class UpdateReminderRequest(
     val dailyMinuteOfDay: Int? = null,
     val oneTimeDueAtUtc: String? = null,
     val weeklyDaysMask: Int? = null,
+    val monthlyDayOfMonth: Int? = null,
     val isActive: Boolean,
 )
 

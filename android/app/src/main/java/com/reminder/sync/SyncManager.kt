@@ -73,6 +73,7 @@ class SyncManager private constructor(private val appContext: Context) {
                             dailyMinuteOfDay = r.dailyMinuteOfDay,
                             oneTimeDueAtUtc = r.oneTimeDueAtUtc?.let { Instant.ofEpochMilli(it).toString() },
                             weeklyDaysMask = r.weeklyDaysMask,
+                            monthlyDayOfMonth = r.monthlyDayOfMonth,
                         ))
                         rDao.update(r.copy(
                             serverId = dto.id,
@@ -87,6 +88,7 @@ class SyncManager private constructor(private val appContext: Context) {
                             dailyMinuteOfDay = r.dailyMinuteOfDay,
                             oneTimeDueAtUtc = r.oneTimeDueAtUtc?.let { Instant.ofEpochMilli(it).toString() },
                             weeklyDaysMask = r.weeklyDaysMask,
+                            monthlyDayOfMonth = r.monthlyDayOfMonth,
                             isActive = r.isActive,
                         ))
                         rDao.update(r.copy(pendingUpdate = false))
@@ -136,6 +138,7 @@ class SyncManager private constructor(private val appContext: Context) {
                     dailyMinuteOfDay = dto.dailyMinuteOfDay,
                     oneTimeDueAtUtc = dto.oneTimeDueAtUtc?.let { Instant.parse(it).toEpochMilli() },
                     weeklyDaysMask = dto.weeklyDaysMask,
+                    monthlyDayOfMonth = dto.monthlyDayOfMonth,
                     isActive = dto.isActive,
                     pendingCreate = false,
                 ))
@@ -146,6 +149,7 @@ class SyncManager private constructor(private val appContext: Context) {
                     dailyMinuteOfDay = dto.dailyMinuteOfDay,
                     oneTimeDueAtUtc = dto.oneTimeDueAtUtc?.let { Instant.parse(it).toEpochMilli() },
                     weeklyDaysMask = dto.weeklyDaysMask,
+                    monthlyDayOfMonth = dto.monthlyDayOfMonth,
                     isActive = dto.isActive,
                 ))
             }

@@ -51,9 +51,12 @@ class ReminderViewModel(app: Application) : AndroidViewModel(app) {
         dailyMinuteOfDay: Int?,
         oneTimeDueAtUtc: Long?,
         weeklyDaysMask: Int?,
+        monthlyDayOfMonth: Int?,
         checklist: List<String> = emptyList(),
     ) = viewModelScope.launch {
-        val localId = repo.createReminder(description, kind, dailyMinuteOfDay, oneTimeDueAtUtc, weeklyDaysMask)
+        val localId = repo.createReminder(
+            description, kind, dailyMinuteOfDay, oneTimeDueAtUtc, weeklyDaysMask, monthlyDayOfMonth,
+        )
         repo.setChecklist(localId, checklist)
         val r = repo.findReminder(localId) ?: return@launch
         ReminderScheduler.scheduleNext(getApplication(), r)
@@ -74,6 +77,7 @@ class ReminderViewModel(app: Application) : AndroidViewModel(app) {
         dailyMinuteOfDay: Int?,
         oneTimeDueAtUtc: Long?,
         weeklyDaysMask: Int?,
+        monthlyDayOfMonth: Int?,
         checklist: List<String> = emptyList(),
     ) = viewModelScope.launch {
         val updated = r.copy(
@@ -82,6 +86,7 @@ class ReminderViewModel(app: Application) : AndroidViewModel(app) {
             dailyMinuteOfDay = dailyMinuteOfDay,
             oneTimeDueAtUtc = oneTimeDueAtUtc,
             weeklyDaysMask = weeklyDaysMask,
+            monthlyDayOfMonth = monthlyDayOfMonth,
         )
         repo.updateReminder(updated)
         repo.setChecklist(updated.id, checklist)

@@ -27,6 +27,7 @@ class ReminderRepository(ctx: Context) {
         dailyMinuteOfDay: Int?,
         oneTimeDueAtUtc: Long?,
         weeklyDaysMask: Int?,
+        monthlyDayOfMonth: Int?,
     ): Long {
         val id = db.reminders().insert(ReminderRow(
             description = description,
@@ -34,6 +35,7 @@ class ReminderRepository(ctx: Context) {
             dailyMinuteOfDay = dailyMinuteOfDay,
             oneTimeDueAtUtc = oneTimeDueAtUtc,
             weeklyDaysMask = weeklyDaysMask,
+            monthlyDayOfMonth = monthlyDayOfMonth,
             pendingCreate = true,
         ))
         sync.triggerSync()

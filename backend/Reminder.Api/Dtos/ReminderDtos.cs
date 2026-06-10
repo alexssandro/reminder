@@ -7,7 +7,8 @@ public record CreateReminderRequest(
     ScheduleKind ScheduleKind,
     int? DailyMinuteOfDay,
     DateTime? OneTimeDueAtUtc,
-    int? WeeklyDaysMask);
+    int? WeeklyDaysMask,
+    int? MonthlyDayOfMonth);
 
 public record UpdateReminderRequest(
     string Description,
@@ -15,6 +16,7 @@ public record UpdateReminderRequest(
     int? DailyMinuteOfDay,
     DateTime? OneTimeDueAtUtc,
     int? WeeklyDaysMask,
+    int? MonthlyDayOfMonth,
     bool IsActive);
 
 public record ReminderDto(
@@ -24,6 +26,7 @@ public record ReminderDto(
     int? DailyMinuteOfDay,
     DateTime? OneTimeDueAtUtc,
     int? WeeklyDaysMask,
+    int? MonthlyDayOfMonth,
     bool IsActive,
     DateTime CreatedAtUtc);
 

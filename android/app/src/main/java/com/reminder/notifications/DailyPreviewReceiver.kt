@@ -49,13 +49,21 @@ class DailyPreviewReceiver : BroadcastReceiver() {
 
             val items = todayItems(reminders, System.currentTimeMillis(), overrides)
                 .filter { it.reminderLocalId !in checkedToday }
-            // Anytime reminders have no time-of-day, so they aren't in todayItems; list them
-            // separately so the daily preview still surfaces them to check off.
+            // Anytime and Monthly reminders have no time-of-day, so they aren't in todayItems;
+            // list them separately so the daily preview still surfaces them to check off.
+            val todayDate = LocalDate.now()
             val anytime = reminders
                 .filter { it.scheduleKind == ScheduleKind.Anytime && it.id !in checkedToday }
-                .map { it.description }
-            if (items.isEmpty() && anytime.isEmpty()) return false
-            NotificationHelper.showDailyPreview(ctx, items, anytime)
+                .map { "Anytime  ${it.description}" }
+            val monthly = reminders
+                .filter {
+                    it.scheduleKind == ScheduleKind.Monthly && it.id !in checkedToday &&
+                        it.monthlyDayOfMonth?.let { d -> monthlyAvailableOn(todayDate, d) } == true
+                }
+                .map { "Monthly  ${it.description}" }
+            val untimed = anytime + monthly
+            if (items.isEmpty() && untimed.isEmpty()) return false
+            NotificationHelper.showDailyPreview(ctx, items, untimed)
             return true
         }
     }

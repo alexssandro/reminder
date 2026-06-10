@@ -62,8 +62,8 @@ fun todayItems(
                         TodayItem(r.id, r.description, minute, r.scheduleKind)
                     } else null
                 }
-                // Anytime reminders have no time-of-day; they're surfaced separately on Home.
-                ScheduleKind.Anytime -> null
+                // Anytime and Monthly reminders have no time-of-day; they're surfaced separately.
+                ScheduleKind.Anytime, ScheduleKind.Monthly -> null
             }
         }
         .sortedBy { it.minuteOfDay }
@@ -92,9 +92,16 @@ fun reminderFiresAt(r: ReminderRow, occDueAtUtc: Long, override: Int? = null): B
         }
         ScheduleKind.OneTime -> r.oneTimeDueAtUtc == occDueAtUtc
         // No scheduled fire time, so no occurrence is ever pinned to one.
-        ScheduleKind.Anytime -> false
+        ScheduleKind.Anytime, ScheduleKind.Monthly -> false
     }
 }
+
+/**
+ * True when a Monthly reminder set to [dayOfMonth] (1..31) is available on [date].
+ * Months shorter than [dayOfMonth] clamp to their last day (e.g. 31 → Feb 28).
+ */
+fun monthlyAvailableOn(date: LocalDate, dayOfMonth: Int): Boolean =
+    date.dayOfMonth == minOf(dayOfMonth, date.lengthOfMonth())
 
 /** Soonest local preview slot (one of [hours], on-the-hour) strictly after [fromMillis]. */
 fun nextPreviewAtUtc(fromMillis: Long, hours: List<Int>): Long {

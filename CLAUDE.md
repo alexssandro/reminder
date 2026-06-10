@@ -10,10 +10,11 @@ Conventions for this repo. Keep this short and factual.
 
 ## Data model
 
-- `ScheduleKind` is persisted as an int (1 = Daily, 2 = OneTime, 3 = Weekly, 4 = Anytime) on both sides — keep the mapping in sync between `Reminder.Api/Entities/Reminder.cs` and `com.reminder.data.ScheduleKind`.
+- `ScheduleKind` is persisted as an int (1 = Daily, 2 = OneTime, 3 = Weekly, 4 = Anytime, 5 = Monthly) on both sides — keep the mapping in sync between `Reminder.Api/Entities/Reminder.cs` and `com.reminder.data.ScheduleKind`.
 - `Daily` stores `DailyMinuteOfDay` as minutes since local midnight (0..1439). `Weekly` adds `WeeklyDaysMask` (bit 0 = Sunday … bit 6 = Saturday).
 - `OneTime` stores `OneTimeDueAtUtc` as a UTC `DateTime` (C# side) / epoch-millis (Android side) — serialize as ISO-8601 on the wire.
 - `Anytime` stores no schedule fields (all null). It never fires an alarm; Home keeps it always available to check off until checked for the day.
+- `Monthly` stores `MonthlyDayOfMonth` (1..31); months with fewer days clamp to their last day. Like Anytime it never fires an alarm — it's available to check off only on that day each month.
 
 ## Migrations
 

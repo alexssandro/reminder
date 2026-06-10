@@ -18,7 +18,8 @@ public static class ReminderEndpoints
                 .ThenBy(x => x.Id)
                 .Select(x => new ReminderDto(
                     x.Id, x.Description, x.ScheduleKind, x.DailyMinuteOfDay,
-                    x.OneTimeDueAtUtc, x.WeeklyDaysMask, x.IsActive, x.CreatedAtUtc))
+                    x.OneTimeDueAtUtc, x.WeeklyDaysMask, x.MonthlyDayOfMonth,
+                    x.IsActive, x.CreatedAtUtc))
                 .ToListAsync();
             return Results.Ok(items);
         });
@@ -40,6 +41,10 @@ public static class ReminderEndpoints
                 (req.WeeklyDaysMask is null || (req.WeeklyDaysMask & 0x7F) == 0))
                 return Results.BadRequest(new { error = "WeeklyDaysMask required (bits 0..6, at least one day)" });
 
+            if (req.ScheduleKind == ScheduleKind.Monthly &&
+                (req.MonthlyDayOfMonth is null || req.MonthlyDayOfMonth < 1 || req.MonthlyDayOfMonth > 31))
+                return Results.BadRequest(new { error = "MonthlyDayOfMonth required in 1..31" });
+
             var entity = new Entities.Reminder
             {
                 Description = req.Description.Trim(),
@@ -47,6 +52,7 @@ public static class ReminderEndpoints
                 DailyMinuteOfDay = minuteRequired ? req.DailyMinuteOfDay : null,
                 OneTimeDueAtUtc = req.ScheduleKind == ScheduleKind.OneTime ? req.OneTimeDueAtUtc : null,
                 WeeklyDaysMask = req.ScheduleKind == ScheduleKind.Weekly ? (req.WeeklyDaysMask & 0x7F) : null,
+                MonthlyDayOfMonth = req.ScheduleKind == ScheduleKind.Monthly ? req.MonthlyDayOfMonth : null,
                 IsActive = true,
             };
             db.Reminders.Add(entity);
@@ -59,11 +65,15 @@ public static class ReminderEndpoints
             var e = await db.Reminders.FindAsync(id);
             if (e is null) return Results.NotFound();
             var minuteRequired = req.ScheduleKind == ScheduleKind.Daily || req.ScheduleKind == ScheduleKind.Weekly;
+            if (req.ScheduleKind == ScheduleKind.Monthly &&
+                (req.MonthlyDayOfMonth is null || req.MonthlyDayOfMonth < 1 || req.MonthlyDayOfMonth > 31))
+                return Results.BadRequest(new { error = "MonthlyDayOfMonth required in 1..31" });
             e.Description = req.Description.Trim();
             e.ScheduleKind = req.ScheduleKind;
             e.DailyMinuteOfDay = minuteRequired ? req.DailyMinuteOfDay : null;
             e.OneTimeDueAtUtc = req.ScheduleKind == ScheduleKind.OneTime ? req.OneTimeDueAtUtc : null;
             e.WeeklyDaysMask = req.ScheduleKind == ScheduleKind.Weekly ? (req.WeeklyDaysMask & 0x7F) : null;
+            e.MonthlyDayOfMonth = req.ScheduleKind == ScheduleKind.Monthly ? req.MonthlyDayOfMonth : null;
             e.IsActive = req.IsActive;
             await db.SaveChangesAsync();
             return Results.Ok(ToDto(e));
@@ -140,5 +150,6 @@ public static class ReminderEndpoints
 
     private static ReminderDto ToDto(Entities.Reminder e) =>
         new(e.Id, e.Description, e.ScheduleKind, e.DailyMinuteOfDay,
-            e.OneTimeDueAtUtc, e.WeeklyDaysMask, e.IsActive, e.CreatedAtUtc);
+            e.OneTimeDueAtUtc, e.WeeklyDaysMask, e.MonthlyDayOfMonth,
+            e.IsActive, e.CreatedAtUtc);
 }

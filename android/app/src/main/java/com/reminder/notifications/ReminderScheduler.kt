@@ -191,8 +191,8 @@ object ReminderScheduler {
                 }
                 null
             }
-            // No due date: nothing to schedule.
-            ScheduleKind.Anytime -> null
+            // No due time: nothing to schedule. Monthly only gates Home/preview availability.
+            ScheduleKind.Anytime, ScheduleKind.Monthly -> null
         }
     }
 

@@ -49,8 +49,11 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.rotate
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlin.math.sin
@@ -91,8 +94,8 @@ private val GreenAccent = Color(0xFF16C60C)
 private val GreenSurface = Color(0xFF0D2E0B)
 private val RedAccent = Color(0xFFE74856)
 private val WarmYellow = Color(0xFFF9F1A5)
-private val VioletAccent = Color(0xFFB4009E)
-private val TealAccent = Color(0xFF61D6D6)
+private val VioletAccent = Color(0xFF9E7BFF)
+private val TealAccent = Color(0xFF3A96DD)
 
 private enum class Screen { Home, Manage }
 
@@ -154,6 +157,10 @@ private fun HomeScreen(vm: ReminderViewModel, onOpenManage: () -> Unit) {
             it.id !in touched
     }
 
+    val pendingCount = livePending.size + overdueToday.size + laterToday.size +
+        monthlyItems.size + anytimeItems.size
+    var showChecked by rememberSaveable { mutableStateOf(false) }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -162,8 +169,8 @@ private fun HomeScreen(vm: ReminderViewModel, onOpenManage: () -> Unit) {
     ) {
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(horizontal = 24.dp, vertical = 20.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+            contentPadding = PaddingValues(horizontal = 20.dp, vertical = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             item {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -179,10 +186,31 @@ private fun HomeScreen(vm: ReminderViewModel, onOpenManage: () -> Unit) {
                         }
                         Spacer(Modifier.height(4.dp))
                         Text(
-                            "// your daily check-ins",
+                            if (pendingCount > 0) "// $pendingCount pending · ${checkedToday.size} done"
+                            else "// all done · ${checkedToday.size} checked today",
                             style = MaterialTheme.typography.bodyMedium,
-                            color = TextMuted,
+                            fontWeight = FontWeight.Bold,
+                            color = if (pendingCount > 0) WarmYellow else GreenAccent,
                         )
+                        val total = pendingCount + checkedToday.size
+                        if (total > 0) {
+                            Spacer(Modifier.height(6.dp))
+                            val barWidth = 14
+                            val filled = checkedToday.size * barWidth / total
+                            Text(
+                                buildAnnotatedString {
+                                    withStyle(SpanStyle(color = TextMuted)) { append("[") }
+                                    withStyle(SpanStyle(color = GreenAccent)) { append("█".repeat(filled)) }
+                                    withStyle(SpanStyle(color = TextMuted.copy(alpha = 0.35f))) {
+                                        append("░".repeat(barWidth - filled))
+                                    }
+                                    withStyle(SpanStyle(color = TextMuted)) {
+                                        append("] ${checkedToday.size}/$total")
+                                    }
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
                     }
                     IconButton(onClick = onOpenManage) {
                         Icon(
@@ -253,7 +281,6 @@ private fun HomeScreen(vm: ReminderViewModel, onOpenManage: () -> Unit) {
                     UntimedRow(
                         reminder,
                         label = "Monthly · day ${reminder.monthlyDayOfMonth}",
-                        icon = Icons.Outlined.EventRepeat,
                         tint = TealAccent,
                         checklist = checklistByReminder[reminder.id].orEmpty(),
                         checkedItemIds = checkedItemIds,
@@ -274,7 +301,6 @@ private fun HomeScreen(vm: ReminderViewModel, onOpenManage: () -> Unit) {
                     UntimedRow(
                         reminder,
                         label = "Anytime",
-                        icon = Icons.Outlined.AllInclusive,
                         tint = VioletAccent,
                         checklist = checklistByReminder[reminder.id].orEmpty(),
                         checkedItemIds = checkedItemIds,
@@ -286,26 +312,45 @@ private fun HomeScreen(vm: ReminderViewModel, onOpenManage: () -> Unit) {
                 }
             }
 
-            if (!needsAttention && laterToday.isEmpty() && anytimeItems.isEmpty() && monthlyItems.isEmpty()) {
+            if (pendingCount == 0) {
                 if (reminders.isEmpty()) {
                     item { HomeEmptyState(onOpenManage) }
-                } else if (checkedToday.isEmpty()) {
+                } else {
                     item { HomeAllCaughtUp() }
                 }
             }
 
+            // Checked items are collapsed by default — pending work owns the screen.
             if (checkedToday.isNotEmpty()) {
                 item { Spacer(Modifier.height(4.dp)) }
-                item { SectionHeader("Checked") }
-                items(checkedToday, key = { "d${it.id}" }) { occ ->
-                    val reminder = reminders.firstOrNull { it.id == occ.reminderLocalId }
-                    DoneRow(
-                        occ,
-                        reminder?.description ?: "Reminder",
-                        checklistByReminder[occ.reminderLocalId].orEmpty(),
-                        checkedItemIds,
-                        vm::toggleChecklistItem,
-                    ) { vm.uncheck(occ) }
+                item {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(2.dp))
+                            .clickable { showChecked = !showChecked }
+                            .padding(vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            (if (showChecked) "[-]" else "[+]") + " checked (${checkedToday.size})",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = TextMuted,
+                        )
+                    }
+                }
+                if (showChecked) {
+                    items(checkedToday, key = { "d${it.id}" }) { occ ->
+                        val reminder = reminders.firstOrNull { it.id == occ.reminderLocalId }
+                        DoneRow(
+                            occ,
+                            reminder?.description ?: "Reminder",
+                            checklistByReminder[occ.reminderLocalId].orEmpty(),
+                            checkedItemIds,
+                            vm::toggleChecklistItem,
+                        ) { vm.uncheck(occ) }
+                    }
                 }
             }
         }
@@ -660,6 +705,20 @@ private fun SectionHeader(text: String) {
     )
 }
 
+/**
+ * Terminal-style status marker leading every Home row: "[!]" needs attention,
+ * "[ ]" still open today, "[x]" done. Mono font keeps them column-aligned.
+ */
+@Composable
+private fun StatusGlyph(text: String, color: Color) {
+    Text(
+        text,
+        style = MaterialTheme.typography.bodyLarge,
+        fontWeight = FontWeight.Bold,
+        color = color,
+    )
+}
+
 /** Solid block cursor blinking at terminal cadence next to the prompt header. */
 @Composable
 private fun BlinkingCursor() {
@@ -692,22 +751,24 @@ private fun PendingRow(
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(2.dp),
-        color = DarkCard,
-        border = BorderStroke(1.dp, WarmYellow.copy(alpha = 0.35f)),
+        color = DarkCardLight,
+        border = BorderStroke(1.5.dp, WarmYellow.copy(alpha = 0.8f)),
     ) {
-        Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)) {
+        Row(Modifier.height(IntrinsicSize.Min)) {
+            Box(Modifier.width(4.dp).fillMaxHeight().background(WarmYellow))
+            Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text("\uD83D\uDD14", fontSize = 22.sp)
+                StatusGlyph("[!]", WarmYellow)
                 Spacer(Modifier.width(14.dp))
                 Column(Modifier.weight(1f)) {
                     Text(
                         description,
                         style = MaterialTheme.typography.bodyLarge,
-                        fontWeight = FontWeight.SemiBold,
-                        color = TextPrimary,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White,
                     )
                     Spacer(Modifier.height(2.dp))
                     Text(
@@ -720,6 +781,7 @@ private fun PendingRow(
                 CheckCircle(onClick = onCheck)
             }
             ChecklistBlock(checklist, checkedItemIds, onToggleChecklistItem)
+            }
         }
     }
 }
@@ -733,45 +795,32 @@ private fun DoneRow(
     onToggleChecklistItem: (itemId: Long, checked: Boolean) -> Unit,
     onUncheck: () -> Unit,
 ) {
+    // Deliberately quiet: checked items recede so unchecked work owns the screen.
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(2.dp),
-        color = GreenSurface.copy(alpha = 0.55f),
-        border = BorderStroke(1.dp, GreenAccent.copy(alpha = 0.45f)),
+        color = DarkBg,
+        border = BorderStroke(1.dp, DarkCardLight),
     ) {
-        Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)) {
+        Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Box(
-                    modifier = Modifier
-                        .size(28.dp)
-                        .clip(CircleShape)
-                        .background(GreenAccent),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(
-                        Icons.Default.Check,
-                        contentDescription = null,
-                        tint = Color.White,
-                        modifier = Modifier.size(16.dp),
-                    )
-                }
+                StatusGlyph("[x]", GreenAccent.copy(alpha = 0.45f))
                 Spacer(Modifier.width(14.dp))
                 Column(Modifier.weight(1f)) {
                     Text(
                         description,
-                        style = MaterialTheme.typography.bodyLarge,
-                        fontWeight = FontWeight.SemiBold,
-                        color = GreenAccent,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = TextMuted,
                         textDecoration = TextDecoration.LineThrough,
                     )
                     Spacer(Modifier.height(2.dp))
                     Text(
                         "Checked " + formatInstant(occ.checkedAtUtc ?: occ.dueAtUtc),
                         style = MaterialTheme.typography.labelSmall,
-                        color = TextSecondary,
+                        color = TextMuted.copy(alpha = 0.7f),
                     )
                 }
                 Spacer(Modifier.width(8.dp))
@@ -779,19 +828,19 @@ private fun DoneRow(
                     Icon(
                         Icons.AutoMirrored.Filled.Undo,
                         contentDescription = null,
-                        tint = AccentBlueBright,
+                        tint = TextMuted,
                         modifier = Modifier.size(16.dp),
                     )
                     Spacer(Modifier.width(4.dp))
                     Text(
                         "Undo",
-                        color = AccentBlueBright,
+                        color = TextMuted,
                         fontWeight = FontWeight.SemiBold,
                         style = MaterialTheme.typography.labelMedium,
                     )
                 }
             }
-            ChecklistBlock(checklist, checkedItemIds, onToggleChecklistItem)
+            ChecklistBlock(checklist, checkedItemIds, onToggleChecklistItem, muted = true)
         }
     }
 }
@@ -807,22 +856,24 @@ private fun OverdueRow(
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(2.dp),
-        color = DarkCard,
-        border = BorderStroke(1.dp, WarmYellow.copy(alpha = 0.35f)),
+        color = DarkCardLight,
+        border = BorderStroke(1.5.dp, WarmYellow.copy(alpha = 0.8f)),
     ) {
-        Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)) {
+        Row(Modifier.height(IntrinsicSize.Min)) {
+            Box(Modifier.width(4.dp).fillMaxHeight().background(WarmYellow))
+            Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text("\ud83d\udd14", fontSize = 22.sp)
+                StatusGlyph("[!]", WarmYellow)
                 Spacer(Modifier.width(14.dp))
                 Column(Modifier.weight(1f)) {
                     Text(
                         item.description,
                         style = MaterialTheme.typography.bodyLarge,
-                        fontWeight = FontWeight.SemiBold,
-                        color = TextPrimary,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White,
                     )
                     Spacer(Modifier.height(2.dp))
                     Text(
@@ -835,6 +886,7 @@ private fun OverdueRow(
                 CheckCircle(onClick = onCheck)
             }
             ChecklistBlock(checklist, checkedItemIds, onToggleChecklistItem)
+            }
         }
     }
 }
@@ -844,17 +896,17 @@ private fun CheckCircle(onClick: () -> Unit) {
     Surface(
         modifier = Modifier
             .size(28.dp)
-            .clip(CircleShape)
+            .clip(RoundedCornerShape(2.dp))
             .clickable(onClick = onClick),
-        shape = CircleShape,
+        shape = RoundedCornerShape(2.dp),
         color = Color.Transparent,
-        border = BorderStroke(1.5.dp, AccentBlueBright),
+        border = BorderStroke(1.5.dp, GreenAccent),
     ) {
         Box(contentAlignment = Alignment.Center) {
             Icon(
                 Icons.Default.Check,
                 contentDescription = "Mark done",
-                tint = AccentBlueBright,
+                tint = GreenAccent,
                 modifier = Modifier.size(16.dp),
             )
         }
@@ -923,42 +975,41 @@ private fun UpcomingRow(
         color = DarkCard,
         border = BorderStroke(1.dp, DarkCardLight),
     ) {
-        Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)) {
+        Row(Modifier.height(IntrinsicSize.Min)) {
+            Box(Modifier.width(4.dp).fillMaxHeight().background(AccentBlueBright))
+            Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Icon(
-                    when (item.kind) {
-                        ScheduleKind.Daily -> Icons.Outlined.Autorenew
-                        ScheduleKind.OneTime -> Icons.Outlined.Event
-                        ScheduleKind.Weekly -> Icons.Outlined.CalendarMonth
-                        ScheduleKind.Anytime -> Icons.Outlined.AllInclusive
-                        ScheduleKind.Monthly -> Icons.Outlined.EventRepeat
-                    },
-                    contentDescription = null,
-                    tint = AccentBlueBright,
-                    modifier = Modifier.size(22.dp),
-                )
+                StatusGlyph("[ ]", AccentBlueBright)
                 Spacer(Modifier.width(14.dp))
                 Column(Modifier.weight(1f)) {
                     Text(
                         item.description,
                         style = MaterialTheme.typography.bodyLarge,
-                        fontWeight = FontWeight.SemiBold,
-                        color = TextPrimary,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White,
                     )
                     Spacer(Modifier.height(2.dp))
                     Text(
-                        "Scheduled " + item.timeLabel,
+                        kindLabel(item.kind),
                         style = MaterialTheme.typography.labelSmall,
                         color = TextSecondary,
                     )
                 }
                 Spacer(Modifier.width(10.dp))
+                Text(
+                    item.timeLabel,
+                    style = MaterialTheme.typography.bodyLarge,
+                    fontWeight = FontWeight.Bold,
+                    color = AccentBlueBright,
+                )
+                Spacer(Modifier.width(12.dp))
                 CheckCircle(onClick = onCheck)
             }
             ChecklistBlock(checklist, checkedItemIds, onToggleChecklistItem)
+            }
         }
     }
 }
@@ -968,7 +1019,6 @@ private fun UpcomingRow(
 private fun UntimedRow(
     reminder: ReminderRow,
     label: String,
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
     tint: Color,
     checklist: List<ChecklistItemRow>,
     checkedItemIds: Set<Long>,
@@ -981,24 +1031,21 @@ private fun UntimedRow(
         color = DarkCard,
         border = BorderStroke(1.dp, tint.copy(alpha = 0.35f)),
     ) {
-        Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)) {
+        Row(Modifier.height(IntrinsicSize.Min)) {
+            Box(Modifier.width(4.dp).fillMaxHeight().background(tint))
+            Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Icon(
-                    icon,
-                    contentDescription = null,
-                    tint = tint,
-                    modifier = Modifier.size(22.dp),
-                )
+                StatusGlyph("[ ]", tint)
                 Spacer(Modifier.width(14.dp))
                 Column(Modifier.weight(1f)) {
                     Text(
                         reminder.description,
                         style = MaterialTheme.typography.bodyLarge,
-                        fontWeight = FontWeight.SemiBold,
-                        color = TextPrimary,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White,
                     )
                     Spacer(Modifier.height(2.dp))
                     Text(
@@ -1011,6 +1058,7 @@ private fun UntimedRow(
                 CheckCircle(onClick = onCheck)
             }
             ChecklistBlock(checklist, checkedItemIds, onToggleChecklistItem)
+            }
         }
     }
 }
@@ -1021,6 +1069,7 @@ private fun ChecklistBlock(
     items: List<ChecklistItemRow>,
     checkedItemIds: Set<Long>,
     onToggle: (itemId: Long, checked: Boolean) -> Unit,
+    muted: Boolean = false,
 ) {
     if (items.isEmpty()) return
     Column(
@@ -1029,6 +1078,7 @@ private fun ChecklistBlock(
     ) {
         items.forEach { item ->
             val checked = item.id in checkedItemIds
+            val checkColor = if (muted) GreenAccent.copy(alpha = 0.35f) else GreenAccent
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -1041,7 +1091,7 @@ private fun ChecklistBlock(
                         .size(20.dp)
                         .clip(RoundedCornerShape(2.dp))
                         .then(
-                            if (checked) Modifier.background(GreenAccent)
+                            if (checked) Modifier.background(checkColor)
                             else Modifier.border(1.5.dp, TextMuted, RoundedCornerShape(2.dp))
                         ),
                     contentAlignment = Alignment.Center,
@@ -1065,6 +1115,14 @@ private fun ChecklistBlock(
             }
         }
     }
+}
+
+private fun kindLabel(kind: ScheduleKind): String = when (kind) {
+    ScheduleKind.Daily -> "daily"
+    ScheduleKind.OneTime -> "once"
+    ScheduleKind.Weekly -> "weekly"
+    ScheduleKind.Anytime -> "anytime"
+    ScheduleKind.Monthly -> "monthly"
 }
 
 private fun dueAtUtcForToday(minuteOfDay: Int): Long =

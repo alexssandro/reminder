@@ -20,13 +20,23 @@ Local-first reminder app with cloud sync.
   - `Daily` — fire every day at a given local HH:MM.
   - `Weekly` — fire at HH:MM on every selected day of the week (e.g. Mon, Wed, Fri).
   - `OneTime` — fire at a specific UTC moment.
-  - `Anytime` — no due date or alarm; always offered on Home until checked off for the day.
+  - `Anytime` — no due date or alarm; offered on Home until checked off once, after which it's done permanently.
   - `Monthly` — no alarm; available to check off on one chosen day (1–31) each month. Months
     shorter than the chosen day clamp to their last day (31 → Feb 28).
 - **Checklists** — a reminder can carry sub-items (local-only, no backend sync). Ticks reset
   each day, independent of the parent check.
 - **Occurrences** — each time a reminder fires, we record an occurrence. While an occurrence
   is unchecked, Android re-rings it every hour. Check-offs play a confetti animation.
+
+## Wishlist
+
+A local-only (no backend sync) list of products you want to buy, reachable from the gift icon
+on Home. Each entry has a name, optional best price, and optional store, and is manually
+prioritized by long-press drag-to-reorder.
+
+- **Mark as bought** — tap the green check on a row (the same gesture as checking a reminder
+  off). The item recedes into a collapsed `[+] bought (N)` section, struck through and stamped
+  with when it was bought. **Undo** there restores it to the wishlist.
 
 ## Notifications
 

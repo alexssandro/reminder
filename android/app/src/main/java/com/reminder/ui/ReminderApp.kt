@@ -14,6 +14,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListItemInfo
@@ -53,6 +54,8 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
@@ -771,6 +774,142 @@ private fun BlinkingCursor() {
     )
 }
 
+/** How long the item must be held before it checks off. */
+private const val HOLD_TO_CHECK_MILLIS = 3000
+
+/**
+ * Wraps [content] in a hold-to-act area: holding for [HOLD_TO_CHECK_MILLIS] runs [onComplete]
+ * (with a haptic tick) while a [fillColor] bar grows left→right behind the content to show
+ * progress; releasing early retracts it. A quick tap (released almost immediately) runs [onTap]
+ * if provided. Used for the small checklist sub-item rows.
+ */
+@Composable
+private fun HoldToAct(
+    onComplete: () -> Unit,
+    fillColor: Color,
+    modifier: Modifier = Modifier,
+    onTap: (() -> Unit)? = null,
+    content: @Composable () -> Unit,
+) {
+    val shape = RoundedCornerShape(2.dp)
+    var holding by remember { mutableStateOf(false) }
+    val progress = remember { Animatable(0f) }
+    val completed = remember { mutableStateOf(false) }
+    val haptics = LocalHapticFeedback.current
+
+    LaunchedEffect(holding) {
+        if (holding) {
+            completed.value = false
+            progress.snapTo(0f)
+            progress.animateTo(1f, tween(HOLD_TO_CHECK_MILLIS, easing = LinearEasing))
+            completed.value = true
+            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+            onComplete()
+            holding = false
+        } else {
+            progress.animateTo(0f, tween(180))
+        }
+    }
+
+    Box(
+        modifier = modifier
+            .clip(shape)
+            .pointerInput(Unit) {
+                detectTapGestures(onPress = {
+                    holding = true
+                    tryAwaitRelease()
+                    val heldFraction = progress.value
+                    val done = completed.value
+                    holding = false
+                    if (!done && heldFraction < 0.08f) onTap?.invoke()
+                })
+            },
+    ) {
+        Box(Modifier.matchParentSize()) {
+            Box(
+                Modifier
+                    .fillMaxHeight()
+                    .fillMaxWidth(progress.value.coerceIn(0f, 1f))
+                    .background(fillColor.copy(alpha = 0.22f))
+            )
+        }
+        content()
+    }
+}
+
+/**
+ * A reminder card you check off by *holding* its main row for [HOLD_TO_CHECK_MILLIS] (no
+ * checkbox). While held, a tinted bar fills the card left→right to show progress; releasing
+ * early retracts it. The optional [checklist] sits below the hold zone so its per-day taps
+ * stay independent of the hold gesture.
+ */
+@Composable
+private fun HoldToCheckCard(
+    accent: Color,
+    surfaceColor: Color,
+    border: BorderStroke,
+    onCheck: () -> Unit,
+    checklist: @Composable () -> Unit = {},
+    body: @Composable RowScope.() -> Unit,
+) {
+    val shape = RoundedCornerShape(2.dp)
+    var holding by remember { mutableStateOf(false) }
+    val progress = remember { Animatable(0f) }
+    val haptics = LocalHapticFeedback.current
+
+    LaunchedEffect(holding) {
+        if (holding) {
+            progress.snapTo(0f)
+            // animateTo only returns normally if the hold runs the full duration; an early
+            // release flips `holding`, cancelling this coroutine before the check fires.
+            progress.animateTo(1f, tween(HOLD_TO_CHECK_MILLIS, easing = LinearEasing))
+            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+            onCheck()
+            holding = false
+        } else {
+            progress.animateTo(0f, tween(180))
+        }
+    }
+
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = shape,
+        color = surfaceColor,
+        border = border,
+    ) {
+        Box {
+            // The growing "checking" fill, clipped to the card and sitting behind the content.
+            Box(Modifier.matchParentSize().clip(shape)) {
+                Box(
+                    Modifier
+                        .fillMaxHeight()
+                        .fillMaxWidth(progress.value.coerceIn(0f, 1f))
+                        .background(accent.copy(alpha = 0.22f))
+                )
+            }
+            Row(Modifier.height(IntrinsicSize.Min)) {
+                Box(Modifier.width(4.dp).fillMaxHeight().background(accent))
+                Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp)) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .pointerInput(Unit) {
+                                detectTapGestures(onPress = {
+                                    holding = true
+                                    tryAwaitRelease()
+                                    holding = false
+                                })
+                            },
+                        verticalAlignment = Alignment.CenterVertically,
+                        content = body,
+                    )
+                    checklist()
+                }
+            }
+        }
+    }
+}
+
 @Composable
 private fun PendingRow(
     occ: OccurrenceRow,
@@ -780,40 +919,28 @@ private fun PendingRow(
     onToggleChecklistItem: (itemId: Long, checked: Boolean) -> Unit,
     onCheck: () -> Unit,
 ) {
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(2.dp),
-        color = DarkCardLight,
+    HoldToCheckCard(
+        accent = WarmYellow,
+        surfaceColor = DarkCardLight,
         border = BorderStroke(1.5.dp, WarmYellow.copy(alpha = 0.8f)),
+        onCheck = onCheck,
+        checklist = { ChecklistBlock(checklist, checkedItemIds, onToggleChecklistItem) },
     ) {
-        Row(Modifier.height(IntrinsicSize.Min)) {
-            Box(Modifier.width(4.dp).fillMaxHeight().background(WarmYellow))
-            Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                StatusGlyph("[!]", WarmYellow)
-                Spacer(Modifier.width(14.dp))
-                Column(Modifier.weight(1f)) {
-                    Text(
-                        description,
-                        style = MaterialTheme.typography.bodyLarge,
-                        fontWeight = FontWeight.Bold,
-                        color = Color.White,
-                    )
-                    Spacer(Modifier.height(2.dp))
-                    Text(
-                        "Due " + formatInstant(occ.dueAtUtc),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = WarmYellow,
-                    )
-                }
-                Spacer(Modifier.width(10.dp))
-                CheckCircle(onClick = onCheck)
-            }
-            ChecklistBlock(checklist, checkedItemIds, onToggleChecklistItem)
-            }
+        StatusGlyph("[!]", WarmYellow)
+        Spacer(Modifier.width(14.dp))
+        Column(Modifier.weight(1f)) {
+            Text(
+                description,
+                style = MaterialTheme.typography.bodyLarge,
+                fontWeight = FontWeight.Bold,
+                color = Color.White,
+            )
+            Spacer(Modifier.height(2.dp))
+            Text(
+                "Due " + formatInstant(occ.dueAtUtc),
+                style = MaterialTheme.typography.labelSmall,
+                color = WarmYellow,
+            )
         }
     }
 }
@@ -885,61 +1012,27 @@ private fun OverdueRow(
     onToggleChecklistItem: (itemId: Long, checked: Boolean) -> Unit,
     onCheck: () -> Unit,
 ) {
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(2.dp),
-        color = DarkCardLight,
+    HoldToCheckCard(
+        accent = WarmYellow,
+        surfaceColor = DarkCardLight,
         border = BorderStroke(1.5.dp, WarmYellow.copy(alpha = 0.8f)),
+        onCheck = onCheck,
+        checklist = { ChecklistBlock(checklist, checkedItemIds, onToggleChecklistItem) },
     ) {
-        Row(Modifier.height(IntrinsicSize.Min)) {
-            Box(Modifier.width(4.dp).fillMaxHeight().background(WarmYellow))
-            Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                StatusGlyph("[!]", WarmYellow)
-                Spacer(Modifier.width(14.dp))
-                Column(Modifier.weight(1f)) {
-                    Text(
-                        item.description,
-                        style = MaterialTheme.typography.bodyLarge,
-                        fontWeight = FontWeight.Bold,
-                        color = Color.White,
-                    )
-                    Spacer(Modifier.height(2.dp))
-                    Text(
-                        "Was due " + item.timeLabel + " today",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = WarmYellow,
-                    )
-                }
-                Spacer(Modifier.width(10.dp))
-                CheckCircle(onClick = onCheck)
-            }
-            ChecklistBlock(checklist, checkedItemIds, onToggleChecklistItem)
-            }
-        }
-    }
-}
-
-@Composable
-private fun CheckCircle(onClick: () -> Unit) {
-    Surface(
-        modifier = Modifier
-            .size(28.dp)
-            .clip(RoundedCornerShape(2.dp))
-            .clickable(onClick = onClick),
-        shape = RoundedCornerShape(2.dp),
-        color = Color.Transparent,
-        border = BorderStroke(1.5.dp, GreenAccent),
-    ) {
-        Box(contentAlignment = Alignment.Center) {
-            Icon(
-                Icons.Default.Check,
-                contentDescription = "Mark done",
-                tint = GreenAccent,
-                modifier = Modifier.size(16.dp),
+        StatusGlyph("[!]", WarmYellow)
+        Spacer(Modifier.width(14.dp))
+        Column(Modifier.weight(1f)) {
+            Text(
+                item.description,
+                style = MaterialTheme.typography.bodyLarge,
+                fontWeight = FontWeight.Bold,
+                color = Color.White,
+            )
+            Spacer(Modifier.height(2.dp))
+            Text(
+                "Was due " + item.timeLabel + " today",
+                style = MaterialTheme.typography.labelSmall,
+                color = WarmYellow,
             )
         }
     }
@@ -1001,48 +1094,36 @@ private fun UpcomingRow(
     onToggleChecklistItem: (itemId: Long, checked: Boolean) -> Unit,
     onCheck: () -> Unit,
 ) {
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(2.dp),
-        color = DarkCard,
+    HoldToCheckCard(
+        accent = AccentBlueBright,
+        surfaceColor = DarkCard,
         border = BorderStroke(1.dp, DarkCardLight),
+        onCheck = onCheck,
+        checklist = { ChecklistBlock(checklist, checkedItemIds, onToggleChecklistItem) },
     ) {
-        Row(Modifier.height(IntrinsicSize.Min)) {
-            Box(Modifier.width(4.dp).fillMaxHeight().background(AccentBlueBright))
-            Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                StatusGlyph("[ ]", AccentBlueBright)
-                Spacer(Modifier.width(14.dp))
-                Column(Modifier.weight(1f)) {
-                    Text(
-                        item.description,
-                        style = MaterialTheme.typography.bodyLarge,
-                        fontWeight = FontWeight.Bold,
-                        color = Color.White,
-                    )
-                    Spacer(Modifier.height(2.dp))
-                    Text(
-                        kindLabel(item.kind),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = TextSecondary,
-                    )
-                }
-                Spacer(Modifier.width(10.dp))
-                Text(
-                    item.timeLabel,
-                    style = MaterialTheme.typography.bodyLarge,
-                    fontWeight = FontWeight.Bold,
-                    color = AccentBlueBright,
-                )
-                Spacer(Modifier.width(12.dp))
-                CheckCircle(onClick = onCheck)
-            }
-            ChecklistBlock(checklist, checkedItemIds, onToggleChecklistItem)
-            }
+        StatusGlyph("[ ]", AccentBlueBright)
+        Spacer(Modifier.width(14.dp))
+        Column(Modifier.weight(1f)) {
+            Text(
+                item.description,
+                style = MaterialTheme.typography.bodyLarge,
+                fontWeight = FontWeight.Bold,
+                color = Color.White,
+            )
+            Spacer(Modifier.height(2.dp))
+            Text(
+                kindLabel(item.kind),
+                style = MaterialTheme.typography.labelSmall,
+                color = TextSecondary,
+            )
         }
+        Spacer(Modifier.width(10.dp))
+        Text(
+            item.timeLabel,
+            style = MaterialTheme.typography.bodyLarge,
+            fontWeight = FontWeight.Bold,
+            color = AccentBlueBright,
+        )
     }
 }
 
@@ -1057,40 +1138,28 @@ private fun UntimedRow(
     onToggleChecklistItem: (itemId: Long, checked: Boolean) -> Unit,
     onCheck: () -> Unit,
 ) {
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(2.dp),
-        color = DarkCard,
+    HoldToCheckCard(
+        accent = tint,
+        surfaceColor = DarkCard,
         border = BorderStroke(1.dp, tint.copy(alpha = 0.35f)),
+        onCheck = onCheck,
+        checklist = { ChecklistBlock(checklist, checkedItemIds, onToggleChecklistItem) },
     ) {
-        Row(Modifier.height(IntrinsicSize.Min)) {
-            Box(Modifier.width(4.dp).fillMaxHeight().background(tint))
-            Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                StatusGlyph("[ ]", tint)
-                Spacer(Modifier.width(14.dp))
-                Column(Modifier.weight(1f)) {
-                    Text(
-                        reminder.description,
-                        style = MaterialTheme.typography.bodyLarge,
-                        fontWeight = FontWeight.Bold,
-                        color = Color.White,
-                    )
-                    Spacer(Modifier.height(2.dp))
-                    Text(
-                        label,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = tint,
-                    )
-                }
-                Spacer(Modifier.width(10.dp))
-                CheckCircle(onClick = onCheck)
-            }
-            ChecklistBlock(checklist, checkedItemIds, onToggleChecklistItem)
-            }
+        StatusGlyph("[ ]", tint)
+        Spacer(Modifier.width(14.dp))
+        Column(Modifier.weight(1f)) {
+            Text(
+                reminder.description,
+                style = MaterialTheme.typography.bodyLarge,
+                fontWeight = FontWeight.Bold,
+                color = Color.White,
+            )
+            Spacer(Modifier.height(2.dp))
+            Text(
+                label,
+                style = MaterialTheme.typography.labelSmall,
+                color = tint,
+            )
         }
     }
 }
@@ -1111,39 +1180,43 @@ private fun ChecklistBlock(
         items.forEach { item ->
             val checked = item.id in checkedItemIds
             val checkColor = if (muted) GreenAccent.copy(alpha = 0.35f) else GreenAccent
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(2.dp))
-                    .clickable { onToggle(item.id, !checked) },
-                verticalAlignment = Alignment.CenterVertically,
+            // Hold to toggle (check or uncheck), matching the parent reminder's hold-to-check.
+            HoldToAct(
+                onComplete = { onToggle(item.id, !checked) },
+                fillColor = GreenAccent,
+                modifier = Modifier.fillMaxWidth(),
             ) {
-                Box(
-                    modifier = Modifier
-                        .size(20.dp)
-                        .clip(RoundedCornerShape(2.dp))
-                        .then(
-                            if (checked) Modifier.background(checkColor)
-                            else Modifier.border(1.5.dp, TextMuted, RoundedCornerShape(2.dp))
-                        ),
-                    contentAlignment = Alignment.Center,
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    if (checked) {
-                        Icon(
-                            Icons.Default.Check,
-                            contentDescription = null,
-                            tint = Color.White,
-                            modifier = Modifier.size(13.dp),
-                        )
+                    Box(
+                        modifier = Modifier
+                            .size(20.dp)
+                            .clip(RoundedCornerShape(2.dp))
+                            .then(
+                                if (checked) Modifier.background(checkColor)
+                                else Modifier.border(1.5.dp, TextMuted, RoundedCornerShape(2.dp))
+                            ),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        if (checked) {
+                            Icon(
+                                Icons.Default.Check,
+                                contentDescription = null,
+                                tint = Color.White,
+                                modifier = Modifier.size(13.dp),
+                            )
+                        }
                     }
+                    Spacer(Modifier.width(10.dp))
+                    Text(
+                        item.text,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = if (checked) TextMuted else TextSecondary,
+                        textDecoration = if (checked) TextDecoration.LineThrough else null,
+                    )
                 }
-                Spacer(Modifier.width(10.dp))
-                Text(
-                    item.text,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = if (checked) TextMuted else TextSecondary,
-                    textDecoration = if (checked) TextDecoration.LineThrough else null,
-                )
             }
         }
     }
@@ -2026,22 +2099,7 @@ private fun WishlistScreen(vm: ReminderViewModel, onBack: () -> Unit) {
             } else {
                 LazyColumn(
                     state = listState,
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .pointerInput(dragState) {
-                            detectDragGesturesAfterLongPress(
-                                onDragStart = { offset -> dragState.onDragStart(offset.y) },
-                                onDrag = { change, amount ->
-                                    change.consume()
-                                    dragState.onDrag(amount.y)
-                                },
-                                onDragEnd = {
-                                    dragState.onDragEnd()
-                                    vm.reorderWishlist(view.map { it.id })
-                                },
-                                onDragCancel = { dragState.onDragEnd() },
-                            )
-                        },
+                    modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(horizontal = 20.dp, vertical = 8.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
@@ -2060,6 +2118,24 @@ private fun WishlistScreen(vm: ReminderViewModel, onBack: () -> Unit) {
                                 }
                             } else {
                                 Modifier.animateItem()
+                            },
+                            // Reorder now starts from the handle only, so the row body is free
+                            // for the hold-to-buy gesture. The index is resolved at drag start.
+                            dragHandle = Modifier.pointerInput(item.id) {
+                                detectDragGesturesAfterLongPress(
+                                    onDragStart = {
+                                        dragState.onDragStart(view.indexOfFirst { it.id == item.id })
+                                    },
+                                    onDrag = { change, amount ->
+                                        change.consume()
+                                        dragState.onDrag(amount.y)
+                                    },
+                                    onDragEnd = {
+                                        dragState.onDragEnd()
+                                        vm.reorderWishlist(view.map { it.id })
+                                    },
+                                    onDragCancel = { dragState.onDragEnd() },
+                                )
                             },
                             onClick = { editing = item },
                             onMarkBought = { vm.toggleWishlistBought(item) },
@@ -2152,82 +2228,130 @@ private fun WishlistRow(
     dragging: Boolean,
     rank: Int,
     modifier: Modifier = Modifier,
+    dragHandle: Modifier,
     onClick: () -> Unit,
     onMarkBought: () -> Unit,
     onDelete: () -> Unit,
 ) {
+    val shape = RoundedCornerShape(2.dp)
+    var holding by remember { mutableStateOf(false) }
+    val progress = remember { Animatable(0f) }
+    val completed = remember { mutableStateOf(false) }
+    val haptics = LocalHapticFeedback.current
+
+    LaunchedEffect(holding) {
+        if (holding) {
+            completed.value = false
+            progress.snapTo(0f)
+            // Returns normally only on a full-length hold; an early release cancels it.
+            progress.animateTo(1f, tween(HOLD_TO_CHECK_MILLIS, easing = LinearEasing))
+            completed.value = true
+            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+            onMarkBought()
+            holding = false
+        } else {
+            progress.animateTo(0f, tween(180))
+        }
+    }
+
     Surface(
         modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(2.dp),
+        shape = shape,
         color = if (dragging) DarkCardLight else DarkCard,
         border = BorderStroke(1.dp, if (dragging) AccentBlueBright else DarkCardLight),
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickable(onClick = onClick)
-                .padding(horizontal = 12.dp, vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Icon(
-                Icons.Default.DragHandle,
-                contentDescription = null,
-                tint = if (dragging) AccentBlueBright else TextMuted,
-                modifier = Modifier.size(20.dp),
-            )
-            Spacer(Modifier.width(10.dp))
-            Text(
-                "$rank.",
-                style = MaterialTheme.typography.bodyMedium,
-                fontWeight = FontWeight.Bold,
-                color = TextMuted,
-            )
-            Spacer(Modifier.width(10.dp))
-            Column(Modifier.weight(1f)) {
-                Text(
-                    item.name,
-                    style = MaterialTheme.typography.bodyLarge,
-                    fontWeight = FontWeight.SemiBold,
-                    color = TextPrimary,
-                    maxLines = 2,
+        Box {
+            // The "buying" fill that grows left→right as the row is held, behind the content.
+            Box(Modifier.matchParentSize().clip(shape)) {
+                Box(
+                    Modifier
+                        .fillMaxHeight()
+                        .fillMaxWidth(progress.value.coerceIn(0f, 1f))
+                        .background(GreenAccent.copy(alpha = 0.22f))
                 )
-                if (!item.store.isNullOrBlank()) {
-                    Spacer(Modifier.height(3.dp))
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            Icons.Outlined.Storefront,
-                            contentDescription = null,
-                            tint = TextMuted,
-                            modifier = Modifier.size(13.dp),
-                        )
-                        Spacer(Modifier.width(4.dp))
+            }
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                // The handle owns reorder; the rest of the row holds-to-buy (tap still edits).
+                Icon(
+                    Icons.Default.DragHandle,
+                    contentDescription = "Drag to reorder",
+                    tint = if (dragging) AccentBlueBright else TextMuted,
+                    modifier = dragHandle.size(20.dp),
+                )
+                Spacer(Modifier.width(10.dp))
+                Row(
+                    modifier = Modifier
+                        .weight(1f)
+                        .pointerInput(Unit) {
+                            detectTapGestures(onPress = {
+                                holding = true
+                                tryAwaitRelease()
+                                val heldFraction = progress.value
+                                val done = completed.value
+                                holding = false
+                                // Quick tap → edit; a longer hold released early just cancels.
+                                if (!done && heldFraction < 0.08f) onClick()
+                            })
+                        },
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        "$rank.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = TextMuted,
+                    )
+                    Spacer(Modifier.width(10.dp))
+                    Column(Modifier.weight(1f)) {
                         Text(
-                            item.store,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = TextSecondary,
-                            maxLines = 1,
+                            item.name,
+                            style = MaterialTheme.typography.bodyLarge,
+                            fontWeight = FontWeight.SemiBold,
+                            color = TextPrimary,
+                            maxLines = 2,
+                        )
+                        if (!item.store.isNullOrBlank()) {
+                            Spacer(Modifier.height(3.dp))
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    Icons.Outlined.Storefront,
+                                    contentDescription = null,
+                                    tint = TextMuted,
+                                    modifier = Modifier.size(13.dp),
+                                )
+                                Spacer(Modifier.width(4.dp))
+                                Text(
+                                    item.store,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = TextSecondary,
+                                    maxLines = 1,
+                                )
+                            }
+                        }
+                    }
+                    formatPrice(item.bestPrice)?.let { price ->
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            price,
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = GreenAccent,
                         )
                     }
                 }
-            }
-            formatPrice(item.bestPrice)?.let { price ->
-                Spacer(Modifier.width(8.dp))
-                Text(
-                    price,
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = GreenAccent,
-                )
-            }
-            Spacer(Modifier.width(8.dp))
-            CheckCircle(onClick = onMarkBought)
-            IconButton(onClick = onDelete) {
-                Icon(
-                    Icons.Default.Delete,
-                    contentDescription = "Delete",
-                    tint = TextMuted,
-                    modifier = Modifier.size(18.dp),
-                )
+                IconButton(onClick = onDelete) {
+                    Icon(
+                        Icons.Default.Delete,
+                        contentDescription = "Delete",
+                        tint = TextMuted,
+                        modifier = Modifier.size(18.dp),
+                    )
+                }
             }
         }
     }
@@ -2382,11 +2506,12 @@ private class WishlistDragState(
     val draggingItemTranslationY: Float
         get() = currentItemInfo?.let { initialOffset + draggedDistance - it.offset } ?: 0f
 
-    fun onDragStart(offsetY: Float) {
+    /** Begin dragging the row at [index] (the drag now starts from that row's handle). */
+    fun onDragStart(index: Int) {
         listState.layoutInfo.visibleItemsInfo
-            .firstOrNull { offsetY.toInt() in it.offset..(it.offset + it.size) }
+            .firstOrNull { it.index == index }
             ?.let {
-                draggingItemIndex = it.index
+                draggingItemIndex = index
                 initialOffset = it.offset
             }
     }

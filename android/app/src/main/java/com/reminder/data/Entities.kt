@@ -65,6 +65,20 @@ data class ChecklistCheckRow(
     val checkedAtUtc: Long = System.currentTimeMillis(),
 )
 
+/**
+ * A wishlist product. Local-only (no backend sync, like the checklist). `position` is the
+ * manual priority order — lower comes first — and is rewritten on drag-and-drop reordering.
+ */
+@Entity(tableName = "wishlist_items")
+data class WishlistItemRow(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val name: String,
+    val bestPrice: Double? = null,
+    val store: String? = null,
+    val position: Int,
+    val createdAtUtc: Long = System.currentTimeMillis(),
+)
+
 @Entity(
     tableName = "occurrences",
     indices = [Index("reminderLocalId"), Index("checkedAtUtc")]

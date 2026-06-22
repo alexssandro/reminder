@@ -117,6 +117,14 @@ class ReminderRepository(ctx: Context) {
     suspend fun checkedReminderIdsSince(sinceUtc: Long): Set<Long> =
         db.occurrences().checkedSince(sinceUtc).map { it.reminderLocalId }.toSet()
 
+    /** Reminder ids that have ever been checked off. Anytime reminders are "done forever"
+     *  once checked, so they're filtered by this rather than by today's checks. */
+    fun observeEverCheckedReminderIds(): Flow<List<Long>> =
+        db.occurrences().observeEverCheckedReminderIds()
+
+    suspend fun everCheckedReminderIds(): Set<Long> =
+        db.occurrences().everCheckedReminderIds().toSet()
+
     suspend fun findOverride(reminderLocalId: Long, localDate: String): ReminderOverrideRow? =
         db.overrides().findFor(reminderLocalId, localDate)
 
@@ -165,5 +173,38 @@ class ReminderRepository(ctx: Context) {
         val dao = db.checklist()
         if (checked) dao.insertCheck(ChecklistCheckRow(checklistItemLocalId = itemId, localDate = localDate))
         else dao.deleteCheck(itemId, localDate)
+    }
+
+    // --- Wishlist (local-only; no backend sync) ---
+
+    fun observeWishlist(): Flow<List<WishlistItemRow>> = db.wishlist().observeAll()
+
+    /** Append a product to the end of the wishlist (lowest priority). */
+    suspend fun addWishlistItem(name: String, bestPrice: Double?, store: String?) {
+        val nextPosition = (db.wishlist().last()?.position ?: -1) + 1
+        db.wishlist().insert(
+            WishlistItemRow(
+                name = name.trim(),
+                bestPrice = bestPrice,
+                store = store?.trim()?.ifEmpty { null },
+                position = nextPosition,
+            )
+        )
+    }
+
+    suspend fun updateWishlistItem(item: WishlistItemRow) {
+        db.wishlist().update(
+            item.copy(
+                name = item.name.trim(),
+                store = item.store?.trim()?.ifEmpty { null },
+            )
+        )
+    }
+
+    suspend fun deleteWishlistItem(id: Long) = db.wishlist().deleteById(id)
+
+    /** Persist a new manual priority order: each id's position becomes its index in the list. */
+    suspend fun reorderWishlist(orderedIds: List<Long>) {
+        orderedIds.forEachIndexed { index, id -> db.wishlist().setPosition(id, index) }
     }
 }

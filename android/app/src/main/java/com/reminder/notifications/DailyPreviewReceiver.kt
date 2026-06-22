@@ -46,6 +46,8 @@ class DailyPreviewReceiver : BroadcastReceiver() {
             // still outstanding. If that leaves nothing, we don't fire a notification at all.
             val startOfToday = LocalDate.now().atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
             val checkedToday = repo.checkedReminderIdsSince(startOfToday)
+            // Anytime is "done forever" once checked, so it's gated on ever-checked, not today's.
+            val everChecked = repo.everCheckedReminderIds()
 
             val items = todayItems(reminders, System.currentTimeMillis(), overrides)
                 .filter { it.reminderLocalId !in checkedToday }
@@ -53,7 +55,7 @@ class DailyPreviewReceiver : BroadcastReceiver() {
             // list them separately so the daily preview still surfaces them to check off.
             val todayDate = LocalDate.now()
             val anytime = reminders
-                .filter { it.scheduleKind == ScheduleKind.Anytime && it.id !in checkedToday }
+                .filter { it.scheduleKind == ScheduleKind.Anytime && it.id !in everChecked }
                 .map { "Anytime  ${it.description}" }
             val monthly = reminders
                 .filter {

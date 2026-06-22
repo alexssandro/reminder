@@ -10,6 +10,7 @@ import com.reminder.data.ReminderOverrideRow
 import com.reminder.data.ReminderRepository
 import com.reminder.data.ReminderRow
 import com.reminder.data.ScheduleKind
+import com.reminder.data.WishlistItemRow
 import kotlinx.coroutines.flow.Flow
 import com.reminder.notifications.NotificationHelper
 import com.reminder.notifications.ReminderScheduler
@@ -32,12 +33,36 @@ class ReminderViewModel(app: Application) : AndroidViewModel(app) {
         repo.observeCheckedSince(startOfTodayUtcMillis())
             .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
+    /** Reminders ever checked off — Anytime items use this for their "done forever" filter. */
+    val everCheckedReminderIds: StateFlow<List<Long>> =
+        repo.observeEverCheckedReminderIds()
+            .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
     val checklistItems: StateFlow<List<ChecklistItemRow>> =
         repo.observeChecklistItems().stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     val checklistChecksToday: StateFlow<List<ChecklistCheckRow>> =
         repo.observeChecklistChecksOn(java.time.LocalDate.now().toString())
             .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    val wishlist: StateFlow<List<WishlistItemRow>> =
+        repo.observeWishlist().stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    fun addWishlistItem(name: String, bestPrice: Double?, store: String?) = viewModelScope.launch {
+        repo.addWishlistItem(name, bestPrice, store)
+    }
+
+    fun updateWishlistItem(item: WishlistItemRow) = viewModelScope.launch {
+        repo.updateWishlistItem(item)
+    }
+
+    fun deleteWishlistItem(id: Long) = viewModelScope.launch {
+        repo.deleteWishlistItem(id)
+    }
+
+    fun reorderWishlist(orderedIds: List<Long>) = viewModelScope.launch {
+        repo.reorderWishlist(orderedIds)
+    }
 
     private fun startOfTodayUtcMillis(): Long =
         java.time.LocalDate.now()

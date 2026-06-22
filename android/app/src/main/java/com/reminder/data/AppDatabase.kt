@@ -81,12 +81,29 @@ private val MIGRATION_4_5 = object : Migration(4, 5) {
     }
 }
 
+private val MIGRATION_5_6 = object : Migration(5, 6) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS `wishlist_items` (
+                `id` INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+                `name` TEXT NOT NULL,
+                `bestPrice` REAL,
+                `store` TEXT,
+                `position` INTEGER NOT NULL,
+                `createdAtUtc` INTEGER NOT NULL
+            )
+            """.trimIndent()
+        )
+    }
+}
+
 @Database(
     entities = [
         ReminderRow::class, OccurrenceRow::class, ReminderOverrideRow::class,
-        ChecklistItemRow::class, ChecklistCheckRow::class,
+        ChecklistItemRow::class, ChecklistCheckRow::class, WishlistItemRow::class,
     ],
-    version = 5,
+    version = 6,
     exportSchema = false
 )
 @TypeConverters(Converters::class)
@@ -95,6 +112,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun occurrences(): OccurrenceDao
     abstract fun overrides(): ReminderOverrideDao
     abstract fun checklist(): ChecklistDao
+    abstract fun wishlist(): WishlistDao
 
     companion object {
         @Volatile private var INSTANCE: AppDatabase? = null
@@ -106,7 +124,9 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "reminder.db"
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
+                    .addMigrations(
+                        MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6,
+                    )
                     .build().also { INSTANCE = it }
             }
     }

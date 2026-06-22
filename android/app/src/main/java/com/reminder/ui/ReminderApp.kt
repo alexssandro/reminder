@@ -13,10 +13,16 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListItemInfo
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -26,9 +32,12 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.DragHandle
 import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.AllInclusive
+import androidx.compose.material.icons.outlined.Redeem
+import androidx.compose.material.icons.outlined.Storefront
 import androidx.compose.material.icons.outlined.Autorenew
 import androidx.compose.material.icons.outlined.CalendarMonth
 import androidx.compose.material.icons.outlined.Edit
@@ -45,13 +54,16 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
@@ -64,6 +76,7 @@ import com.reminder.data.OccurrenceRow
 import com.reminder.data.ReminderOverrideRow
 import com.reminder.data.ReminderRow
 import com.reminder.data.ScheduleKind
+import com.reminder.data.WishlistItemRow
 import com.reminder.notifications.DailyPreviewReceiver
 import com.reminder.notifications.TodayItem
 import com.reminder.notifications.monthlyAvailableOn
@@ -97,22 +110,32 @@ private val WarmYellow = Color(0xFFF9F1A5)
 private val VioletAccent = Color(0xFF9E7BFF)
 private val TealAccent = Color(0xFF3A96DD)
 
-private enum class Screen { Home, Manage }
+private enum class Screen { Home, Manage, Wishlist }
 
 @Composable
 fun ReminderApp(vm: ReminderViewModel) {
     var screen by rememberSaveable { mutableStateOf(Screen.Home) }
     when (screen) {
-        Screen.Home -> HomeScreen(vm, onOpenManage = { screen = Screen.Manage })
+        Screen.Home -> HomeScreen(
+            vm,
+            onOpenManage = { screen = Screen.Manage },
+            onOpenWishlist = { screen = Screen.Wishlist },
+        )
         Screen.Manage -> ManageScreen(vm, onBack = { screen = Screen.Home })
+        Screen.Wishlist -> WishlistScreen(vm, onBack = { screen = Screen.Home })
     }
 }
 
 @Composable
-private fun HomeScreen(vm: ReminderViewModel, onOpenManage: () -> Unit) {
+private fun HomeScreen(
+    vm: ReminderViewModel,
+    onOpenManage: () -> Unit,
+    onOpenWishlist: () -> Unit,
+) {
     val reminders by vm.reminders.collectAsState()
     val pending by vm.pendingOccurrences.collectAsState()
     val checkedToday by vm.checkedToday.collectAsState()
+    val everCheckedIds by vm.everCheckedReminderIds.collectAsState()
     val overridesToday by vm.overridesToday.collectAsState()
     val checklistItems by vm.checklistItems.collectAsState()
     val checklistChecksToday by vm.checklistChecksToday.collectAsState()
@@ -141,11 +164,13 @@ private fun HomeScreen(vm: ReminderViewModel, onOpenManage: () -> Unit) {
         .filter { it.reminderLocalId !in touched }
         .partition { dueAtUtcForToday(it.minuteOfDay) <= nowMs }
 
-    // No-due-date reminders are always offered until checked off for the day.
+    // Anytime reminders are "done forever" once checked — they never reset, so they drop off
+    // permanently (filtered by everCheckedIds), unlike Daily/Monthly which reset each period.
     val anytimeItems = reminders.filter {
         it.isActive && !it.pendingDelete &&
             it.scheduleKind == ScheduleKind.Anytime &&
-            it.id !in touched
+            it.id !in touched &&
+            it.id !in everCheckedIds
     }
 
     // Monthly reminders surface only on their chosen day of the month (clamped in short months).
@@ -211,6 +236,13 @@ private fun HomeScreen(vm: ReminderViewModel, onOpenManage: () -> Unit) {
                                 style = MaterialTheme.typography.bodySmall,
                             )
                         }
+                    }
+                    IconButton(onClick = onOpenWishlist) {
+                        Icon(
+                            Icons.Outlined.Redeem,
+                            contentDescription = "Wishlist",
+                            tint = TextSecondary,
+                        )
                     }
                     IconButton(onClick = onOpenManage) {
                         Icon(
@@ -1587,13 +1619,19 @@ private fun KindChip(
 }
 
 @Composable
-private fun DarkField(value: String, onChange: (String) -> Unit, label: String) {
+private fun DarkField(
+    value: String,
+    onChange: (String) -> Unit,
+    label: String,
+    keyboardOptions: KeyboardOptions = KeyboardOptions.Default,
+) {
     OutlinedTextField(
         value = value,
         onValueChange = onChange,
         label = { Text(label) },
         modifier = Modifier.fillMaxWidth(),
         singleLine = true,
+        keyboardOptions = keyboardOptions,
         shape = RoundedCornerShape(2.dp),
         colors = OutlinedTextFieldDefaults.colors(
             focusedTextColor = TextPrimary,
@@ -1884,3 +1922,397 @@ private fun ConfettiEffect() {
         }
     }
 }
+
+// --- Wishlist ---------------------------------------------------------------
+
+@Composable
+private fun WishlistScreen(vm: ReminderViewModel, onBack: () -> Unit) {
+    val items by vm.wishlist.collectAsState()
+    var editing by remember { mutableStateOf<WishlistItemRow?>(null) }
+    var showAdd by rememberSaveable { mutableStateOf(false) }
+    var confirmDelete by remember { mutableStateOf<WishlistItemRow?>(null) }
+
+    val listState = rememberLazyListState()
+    // Local mirror of the list so drag reordering is instant; we resync whenever a fresh
+    // list arrives from Room (and never mid-drag, to avoid snapping back).
+    val view = remember { mutableStateListOf<WishlistItemRow>() }
+    val dragState = rememberWishlistDragState(listState) { from, to ->
+        if (from in view.indices && to in view.indices) view.add(to, view.removeAt(from))
+    }
+    LaunchedEffect(items) {
+        if (dragState.draggingItemIndex == null) {
+            view.clear()
+            view.addAll(items)
+        }
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(DarkBg)
+            .statusBarsPadding(),
+    ) {
+        Column(Modifier.fillMaxSize()) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                IconButton(onClick = onBack) {
+                    Icon(
+                        Icons.AutoMirrored.Outlined.ArrowBack,
+                        contentDescription = "Back",
+                        tint = TextSecondary,
+                    )
+                }
+                Spacer(Modifier.width(4.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        "wishlist:~$",
+                        style = MaterialTheme.typography.headlineSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = GreenAccent,
+                    )
+                    Text(
+                        if (items.isEmpty()) "// nothing yet"
+                        else "// ${items.size} item${if (items.size == 1) "" else "s"} · long-press to reorder",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = TextMuted,
+                    )
+                }
+                IconButton(onClick = { showAdd = true }) {
+                    Icon(Icons.Default.Add, contentDescription = "Add product", tint = AccentBlueBright)
+                }
+            }
+
+            if (items.isEmpty()) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(32.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center,
+                ) {
+                    Icon(
+                        Icons.Outlined.Redeem,
+                        contentDescription = null,
+                        tint = TextMuted,
+                        modifier = Modifier.size(48.dp),
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    Text(
+                        "No products yet",
+                        style = MaterialTheme.typography.bodyLarge,
+                        fontWeight = FontWeight.SemiBold,
+                        color = TextSecondary,
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        "Tap + to add your first wish.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = TextMuted,
+                    )
+                }
+            } else {
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .pointerInput(dragState) {
+                            detectDragGesturesAfterLongPress(
+                                onDragStart = { offset -> dragState.onDragStart(offset.y) },
+                                onDrag = { change, amount ->
+                                    change.consume()
+                                    dragState.onDrag(amount.y)
+                                },
+                                onDragEnd = {
+                                    dragState.onDragEnd()
+                                    vm.reorderWishlist(view.map { it.id })
+                                },
+                                onDragCancel = { dragState.onDragEnd() },
+                            )
+                        },
+                    contentPadding = PaddingValues(horizontal = 20.dp, vertical = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    itemsIndexed(view, key = { _, it -> it.id }) { index, item ->
+                        val dragging = index == dragState.draggingItemIndex
+                        WishlistRow(
+                            item = item,
+                            dragging = dragging,
+                            rank = index + 1,
+                            modifier = if (dragging) {
+                                Modifier.graphicsLayer {
+                                    translationY = dragState.draggingItemTranslationY
+                                    shadowElevation = 12f
+                                }
+                            } else {
+                                Modifier.animateItem()
+                            },
+                            onClick = { editing = item },
+                            onDelete = { confirmDelete = item },
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    if (showAdd) {
+        WishlistItemDialog(
+            initial = null,
+            onDismiss = { showAdd = false },
+            onSave = { name, price, store ->
+                vm.addWishlistItem(name, price, store)
+                showAdd = false
+            },
+        )
+    }
+
+    editing?.let { current ->
+        WishlistItemDialog(
+            initial = current,
+            onDismiss = { editing = null },
+            onSave = { name, price, store ->
+                vm.updateWishlistItem(current.copy(name = name, bestPrice = price, store = store))
+                editing = null
+            },
+        )
+    }
+
+    confirmDelete?.let { target ->
+        AlertDialog(
+            onDismissRequest = { confirmDelete = null },
+            confirmButton = {
+                TextButton(onClick = {
+                    vm.deleteWishlistItem(target.id)
+                    confirmDelete = null
+                }) { Text("Delete", color = RedAccent, fontWeight = FontWeight.Bold) }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmDelete = null }) {
+                    Text("Cancel", color = TextSecondary)
+                }
+            },
+            title = { Text("Remove product?", color = TextPrimary, fontWeight = FontWeight.Bold) },
+            text = {
+                Text("“${target.name}” will be removed from your wishlist.", color = TextSecondary)
+            },
+            containerColor = DarkCard,
+            shape = RoundedCornerShape(2.dp),
+        )
+    }
+}
+
+@Composable
+private fun WishlistRow(
+    item: WishlistItemRow,
+    dragging: Boolean,
+    rank: Int,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    Surface(
+        modifier = modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(2.dp),
+        color = if (dragging) DarkCardLight else DarkCard,
+        border = BorderStroke(1.dp, if (dragging) AccentBlueBright else DarkCardLight),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(onClick = onClick)
+                .padding(horizontal = 12.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                Icons.Default.DragHandle,
+                contentDescription = null,
+                tint = if (dragging) AccentBlueBright else TextMuted,
+                modifier = Modifier.size(20.dp),
+            )
+            Spacer(Modifier.width(10.dp))
+            Text(
+                "$rank.",
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.Bold,
+                color = TextMuted,
+            )
+            Spacer(Modifier.width(10.dp))
+            Column(Modifier.weight(1f)) {
+                Text(
+                    item.name,
+                    style = MaterialTheme.typography.bodyLarge,
+                    fontWeight = FontWeight.SemiBold,
+                    color = TextPrimary,
+                    maxLines = 2,
+                )
+                if (!item.store.isNullOrBlank()) {
+                    Spacer(Modifier.height(3.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            Icons.Outlined.Storefront,
+                            contentDescription = null,
+                            tint = TextMuted,
+                            modifier = Modifier.size(13.dp),
+                        )
+                        Spacer(Modifier.width(4.dp))
+                        Text(
+                            item.store,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = TextSecondary,
+                            maxLines = 1,
+                        )
+                    }
+                }
+            }
+            formatPrice(item.bestPrice)?.let { price ->
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    price,
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = GreenAccent,
+                )
+            }
+            IconButton(onClick = onDelete) {
+                Icon(
+                    Icons.Default.Delete,
+                    contentDescription = "Delete",
+                    tint = TextMuted,
+                    modifier = Modifier.size(18.dp),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun WishlistItemDialog(
+    initial: WishlistItemRow?,
+    onDismiss: () -> Unit,
+    onSave: (name: String, bestPrice: Double?, store: String) -> Unit,
+) {
+    var name by rememberSaveable(initial?.id) { mutableStateOf(initial?.name ?: "") }
+    var priceText by rememberSaveable(initial?.id) {
+        mutableStateOf(initial?.bestPrice?.let { formatPlainPrice(it) } ?: "")
+    }
+    var store by rememberSaveable(initial?.id) { mutableStateOf(initial?.store ?: "") }
+
+    val isEdit = initial != null
+    Dialog(onDismiss = onDismiss) {
+        Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    if (isEdit) "Edit product" else "New product",
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = TextPrimary,
+                    modifier = Modifier.weight(1f),
+                )
+                IconButton(onClick = onDismiss) {
+                    Icon(Icons.Default.Close, contentDescription = "Close", tint = TextMuted)
+                }
+            }
+            DarkField(value = name, onChange = { name = it }, label = "Product")
+            DarkField(
+                value = priceText,
+                onChange = { priceText = it },
+                label = "Best price",
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+            )
+            DarkField(value = store, onChange = { store = it }, label = "Store (optional)")
+            Spacer(Modifier.height(4.dp))
+            GradientButton(
+                label = if (isEdit) "Save changes" else "Add product",
+                enabled = name.isNotBlank(),
+                onClick = { onSave(name.trim(), parsePrice(priceText), store.trim()) },
+            )
+        }
+    }
+}
+
+@Composable
+private fun rememberWishlistDragState(
+    listState: LazyListState,
+    onMove: (Int, Int) -> Unit,
+): WishlistDragState = remember(listState) { WishlistDragState(listState, onMove) }
+
+/**
+ * Drag-to-reorder bookkeeping for a [LazyColumn]. Tracks which item is held, calls [onMove]
+ * when the held item's midpoint crosses a neighbour, and exposes a translation that keeps the
+ * dragged row pinned under the finger even as the reorder shifts surrounding offsets.
+ */
+private class WishlistDragState(
+    private val listState: LazyListState,
+    private val onMove: (Int, Int) -> Unit,
+) {
+    var draggingItemIndex by mutableStateOf<Int?>(null)
+        private set
+
+    private var draggedDistance by mutableFloatStateOf(0f)
+    private var initialOffset by mutableIntStateOf(0)
+
+    private val currentItemInfo: LazyListItemInfo?
+        get() = draggingItemIndex?.let { idx ->
+            listState.layoutInfo.visibleItemsInfo.firstOrNull { it.index == idx }
+        }
+
+    val draggingItemTranslationY: Float
+        get() = currentItemInfo?.let { initialOffset + draggedDistance - it.offset } ?: 0f
+
+    fun onDragStart(offsetY: Float) {
+        listState.layoutInfo.visibleItemsInfo
+            .firstOrNull { offsetY.toInt() in it.offset..(it.offset + it.size) }
+            ?.let {
+                draggingItemIndex = it.index
+                initialOffset = it.offset
+            }
+    }
+
+    fun onDrag(deltaY: Float) {
+        draggedDistance += deltaY
+        val dragging = currentItemInfo ?: return
+        val middle = dragging.offset + draggingItemTranslationY + dragging.size / 2f
+        val target = listState.layoutInfo.visibleItemsInfo.firstOrNull { item ->
+            item.index != dragging.index &&
+                middle.toInt() in item.offset..(item.offset + item.size)
+        }
+        if (target != null) {
+            onMove(dragging.index, target.index)
+            draggingItemIndex = target.index
+        }
+    }
+
+    fun onDragEnd() {
+        draggingItemIndex = null
+        draggedDistance = 0f
+        initialOffset = 0
+    }
+}
+
+/** Parse a free-form price ("R$ 1.299,90", "199.90", "50") into a Double, or null if blank. */
+private fun parsePrice(text: String): Double? {
+    val cleaned = text.trim().replace(Regex("[^0-9.,]"), "")
+    if (cleaned.isEmpty()) return null
+    val normalized = when {
+        cleaned.contains(',') && cleaned.contains('.') -> cleaned.replace(".", "").replace(',', '.')
+        cleaned.contains(',') -> cleaned.replace(',', '.')
+        else -> cleaned
+    }
+    return normalized.toDoubleOrNull()
+}
+
+/** Currency-formatted price for display, using the device locale. Null when no price set. */
+private fun formatPrice(value: Double?): String? =
+    value?.let { java.text.NumberFormat.getCurrencyInstance().format(it) }
+
+/** Plain editable price string (no currency symbol) for prefilling the edit field. */
+private fun formatPlainPrice(value: Double): String =
+    if (value == value.toLong().toDouble()) value.toLong().toString()
+    else String.format(java.util.Locale.US, "%.2f", value)

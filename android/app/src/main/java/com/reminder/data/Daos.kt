@@ -83,6 +83,27 @@ interface ChecklistDao {
 }
 
 @Dao
+interface WishlistDao {
+    @Query("SELECT * FROM wishlist_items ORDER BY position ASC, id ASC")
+    fun observeAll(): Flow<List<WishlistItemRow>>
+
+    @Query("SELECT * FROM wishlist_items ORDER BY position DESC LIMIT 1")
+    suspend fun last(): WishlistItemRow?
+
+    @Insert
+    suspend fun insert(row: WishlistItemRow): Long
+
+    @Update
+    suspend fun update(row: WishlistItemRow)
+
+    @Query("UPDATE wishlist_items SET position = :position WHERE id = :id")
+    suspend fun setPosition(id: Long, position: Int)
+
+    @Query("DELETE FROM wishlist_items WHERE id = :id")
+    suspend fun deleteById(id: Long)
+}
+
+@Dao
 interface OccurrenceDao {
     @Query("""SELECT o.* FROM occurrences o
               INNER JOIN reminders r ON r.id = o.reminderLocalId
@@ -106,6 +127,18 @@ interface OccurrenceDao {
               INNER JOIN reminders r ON r.id = o.reminderLocalId
               WHERE o.checkedAtUtc IS NOT NULL AND o.checkedAtUtc >= :sinceUtc AND r.pendingDelete = 0""")
     suspend fun checkedSince(sinceUtc: Long): List<OccurrenceRow>
+
+    /** Reminder ids that have ever been checked off (any day). Used for the permanent
+     *  "done forever" semantics of Anytime reminders, which never reset. */
+    @Query("""SELECT DISTINCT o.reminderLocalId FROM occurrences o
+              INNER JOIN reminders r ON r.id = o.reminderLocalId
+              WHERE o.checkedAtUtc IS NOT NULL AND r.pendingDelete = 0""")
+    fun observeEverCheckedReminderIds(): Flow<List<Long>>
+
+    @Query("""SELECT DISTINCT o.reminderLocalId FROM occurrences o
+              INNER JOIN reminders r ON r.id = o.reminderLocalId
+              WHERE o.checkedAtUtc IS NOT NULL AND r.pendingDelete = 0""")
+    suspend fun everCheckedReminderIds(): List<Long>
 
     @Query("SELECT * FROM occurrences WHERE pendingCreate = 1 OR pendingCheck = 1")
     suspend fun pending(): List<OccurrenceRow>

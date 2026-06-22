@@ -68,6 +68,8 @@ data class ChecklistCheckRow(
 /**
  * A wishlist product. Local-only (no backend sync, like the checklist). `position` is the
  * manual priority order — lower comes first — and is rewritten on drag-and-drop reordering.
+ * `boughtAtUtc` mirrors a reminder's `checkedAtUtc`: null while still wished-for, set to the
+ * moment it was marked bought (which moves it into the collapsed "bought" section).
  */
 @Entity(tableName = "wishlist_items")
 data class WishlistItemRow(
@@ -76,6 +78,7 @@ data class WishlistItemRow(
     val bestPrice: Double? = null,
     val store: String? = null,
     val position: Int,
+    val boughtAtUtc: Long? = null,
     val createdAtUtc: Long = System.currentTimeMillis(),
 )
 

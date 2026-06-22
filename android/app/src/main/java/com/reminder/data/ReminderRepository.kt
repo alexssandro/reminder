@@ -203,6 +203,10 @@ class ReminderRepository(ctx: Context) {
 
     suspend fun deleteWishlistItem(id: Long) = db.wishlist().deleteById(id)
 
+    /** Mark a product bought (true) or restore it to the wishlist (false). */
+    suspend fun setWishlistBought(id: Long, bought: Boolean) =
+        db.wishlist().setBought(id, if (bought) System.currentTimeMillis() else null)
+
     /** Persist a new manual priority order: each id's position becomes its index in the list. */
     suspend fun reorderWishlist(orderedIds: List<Long>) {
         orderedIds.forEachIndexed { index, id -> db.wishlist().setPosition(id, index) }

@@ -98,12 +98,18 @@ private val MIGRATION_5_6 = object : Migration(5, 6) {
     }
 }
 
+private val MIGRATION_6_7 = object : Migration(6, 7) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE `wishlist_items` ADD COLUMN `boughtAtUtc` INTEGER")
+    }
+}
+
 @Database(
     entities = [
         ReminderRow::class, OccurrenceRow::class, ReminderOverrideRow::class,
         ChecklistItemRow::class, ChecklistCheckRow::class, WishlistItemRow::class,
     ],
-    version = 6,
+    version = 7,
     exportSchema = false
 )
 @TypeConverters(Converters::class)
@@ -126,6 +132,7 @@ abstract class AppDatabase : RoomDatabase() {
                 )
                     .addMigrations(
                         MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6,
+                        MIGRATION_6_7,
                     )
                     .build().also { INSTANCE = it }
             }

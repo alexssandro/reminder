@@ -1931,18 +1931,24 @@ private fun WishlistScreen(vm: ReminderViewModel, onBack: () -> Unit) {
     var editing by remember { mutableStateOf<WishlistItemRow?>(null) }
     var showAdd by rememberSaveable { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf<WishlistItemRow?>(null) }
+    var showBought by rememberSaveable { mutableStateOf(false) }
+
+    // Wished-for items stay in the draggable list; bought ones recede into a collapsed
+    // section below (most-recently bought first), mirroring Home's checked-off items.
+    val pending = items.filter { it.boughtAtUtc == null }
+    val bought = items.filter { it.boughtAtUtc != null }.sortedByDescending { it.boughtAtUtc }
 
     val listState = rememberLazyListState()
-    // Local mirror of the list so drag reordering is instant; we resync whenever a fresh
-    // list arrives from Room (and never mid-drag, to avoid snapping back).
+    // Local mirror of the pending list so drag reordering is instant; we resync whenever a
+    // fresh list arrives from Room (and never mid-drag, to avoid snapping back).
     val view = remember { mutableStateListOf<WishlistItemRow>() }
     val dragState = rememberWishlistDragState(listState) { from, to ->
         if (from in view.indices && to in view.indices) view.add(to, view.removeAt(from))
     }
-    LaunchedEffect(items) {
+    LaunchedEffect(pending) {
         if (dragState.draggingItemIndex == null) {
             view.clear()
-            view.addAll(items)
+            view.addAll(pending)
         }
     }
 
@@ -1975,8 +1981,11 @@ private fun WishlistScreen(vm: ReminderViewModel, onBack: () -> Unit) {
                         color = GreenAccent,
                     )
                     Text(
-                        if (items.isEmpty()) "// nothing yet"
-                        else "// ${items.size} item${if (items.size == 1) "" else "s"} · long-press to reorder",
+                        when {
+                            items.isEmpty() -> "// nothing yet"
+                            pending.isEmpty() -> "// all bought · ${bought.size} done"
+                            else -> "// ${pending.size} item${if (pending.size == 1) "" else "s"} · long-press to reorder"
+                        },
                         style = MaterialTheme.typography.bodySmall,
                         color = TextMuted,
                     )
@@ -2036,6 +2045,8 @@ private fun WishlistScreen(vm: ReminderViewModel, onBack: () -> Unit) {
                     contentPadding = PaddingValues(horizontal = 20.dp, vertical = 8.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
+                    // Pending rows occupy LazyColumn indices 0..view.size-1, so they line up
+                    // with `view` for the drag-reorder math; the bought section trails after.
                     itemsIndexed(view, key = { _, it -> it.id }) { index, item ->
                         val dragging = index == dragState.draggingItemIndex
                         WishlistRow(
@@ -2051,8 +2062,38 @@ private fun WishlistScreen(vm: ReminderViewModel, onBack: () -> Unit) {
                                 Modifier.animateItem()
                             },
                             onClick = { editing = item },
+                            onMarkBought = { vm.toggleWishlistBought(item) },
                             onDelete = { confirmDelete = item },
                         )
+                    }
+
+                    if (bought.isNotEmpty()) {
+                        item(key = "bought-header") {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(2.dp))
+                                    .clickable { showBought = !showBought }
+                                    .padding(vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text(
+                                    (if (showBought) "[-]" else "[+]") + " bought (${bought.size})",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = TextMuted,
+                                )
+                            }
+                        }
+                        if (showBought) {
+                            items(bought, key = { "b${it.id}" }) { item ->
+                                WishlistBoughtRow(
+                                    item = item,
+                                    onRestore = { vm.toggleWishlistBought(item) },
+                                    onDelete = { confirmDelete = item },
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -2112,6 +2153,7 @@ private fun WishlistRow(
     rank: Int,
     modifier: Modifier = Modifier,
     onClick: () -> Unit,
+    onMarkBought: () -> Unit,
     onDelete: () -> Unit,
 ) {
     Surface(
@@ -2175,6 +2217,80 @@ private fun WishlistRow(
                     style = MaterialTheme.typography.bodyMedium,
                     fontWeight = FontWeight.Bold,
                     color = GreenAccent,
+                )
+            }
+            Spacer(Modifier.width(8.dp))
+            CheckCircle(onClick = onMarkBought)
+            IconButton(onClick = onDelete) {
+                Icon(
+                    Icons.Default.Delete,
+                    contentDescription = "Delete",
+                    tint = TextMuted,
+                    modifier = Modifier.size(18.dp),
+                )
+            }
+        }
+    }
+}
+
+/** A bought product, receded into the collapsed "bought" section. Restore puts it back on the
+ *  wishlist (mirrors un-checking a reminder). */
+@Composable
+private fun WishlistBoughtRow(
+    item: WishlistItemRow,
+    onRestore: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(2.dp),
+        color = DarkBg,
+        border = BorderStroke(1.dp, DarkCardLight),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            StatusGlyph("[x]", GreenAccent.copy(alpha = 0.45f))
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text(
+                    item.name,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = TextMuted,
+                    textDecoration = TextDecoration.LineThrough,
+                    maxLines = 2,
+                )
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    "Bought " + formatInstant(item.boughtAtUtc ?: item.createdAtUtc),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = TextMuted.copy(alpha = 0.7f),
+                )
+            }
+            formatPrice(item.bestPrice)?.let { price ->
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    price,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = TextMuted,
+                )
+            }
+            TextButton(onClick = onRestore) {
+                Icon(
+                    Icons.AutoMirrored.Filled.Undo,
+                    contentDescription = null,
+                    tint = TextMuted,
+                    modifier = Modifier.size(16.dp),
+                )
+                Spacer(Modifier.width(4.dp))
+                Text(
+                    "Undo",
+                    color = TextMuted,
+                    fontWeight = FontWeight.SemiBold,
+                    style = MaterialTheme.typography.labelMedium,
                 )
             }
             IconButton(onClick = onDelete) {

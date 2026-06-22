@@ -60,6 +60,11 @@ class ReminderViewModel(app: Application) : AndroidViewModel(app) {
         repo.deleteWishlistItem(id)
     }
 
+    /** Toggle a product between wished-for and bought (mirrors checking a reminder off). */
+    fun toggleWishlistBought(item: WishlistItemRow) = viewModelScope.launch {
+        repo.setWishlistBought(item.id, item.boughtAtUtc == null)
+    }
+
     fun reorderWishlist(orderedIds: List<Long>) = viewModelScope.launch {
         repo.reorderWishlist(orderedIds)
     }

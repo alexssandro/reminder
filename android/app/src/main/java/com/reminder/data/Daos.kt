@@ -99,6 +99,10 @@ interface WishlistDao {
     @Query("UPDATE wishlist_items SET position = :position WHERE id = :id")
     suspend fun setPosition(id: Long, position: Int)
 
+    /** Mark bought ([boughtAtUtc] = now) or restore to the wishlist ([boughtAtUtc] = null). */
+    @Query("UPDATE wishlist_items SET boughtAtUtc = :boughtAtUtc WHERE id = :id")
+    suspend fun setBought(id: Long, boughtAtUtc: Long?)
+
     @Query("DELETE FROM wishlist_items WHERE id = :id")
     suspend fun deleteById(id: Long)
 }
